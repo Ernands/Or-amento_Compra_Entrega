@@ -112,6 +112,9 @@ const stores: Store[] = Array.from({ length: 27 }, (_, index) => {
     email: "",
     phone: "",
     status: "A cadastrar",
+    address: "",
+    notes: "",
+    version: 1,
   };
 });
 
@@ -128,6 +131,11 @@ const items: Item[] = catalog.map(([operationalCode, group, area, name], index) 
     definitionStatus: pendingItemNumbers.has(number) ? "PENDENTE_DEFINICAO" : "LIBERADO_PARA_COTACAO",
     duplicateOperationalCode: codeFrequency[operationalCode] > 1,
     active: true,
+    route1: "",
+    route2: "",
+    route3: "",
+    notes: "",
+    version: 1,
   };
 });
 
@@ -139,6 +147,7 @@ const necessities: Necessity[] = stores.flatMap((store, storeIndex) =>
     quantity: 1,
     priority: "MEDIA" as const,
     status: item.definitionStatus === "PENDENTE_DEFINICAO" ? "PENDENTE_DEFINICAO" : "NAO_INICIADO",
+    version: 1,
   })),
 );
 
@@ -166,5 +175,13 @@ export class OfficialSnapshotRepository implements OperationsRepository {
 
   async listNecessities() {
     return necessities.map((necessity) => ({ ...necessity }));
+  }
+
+  async updateStore(): Promise<never> {
+    throw new Error("O snapshot local é somente leitura.");
+  }
+
+  async updateItem(): Promise<never> {
+    throw new Error("O snapshot local é somente leitura.");
   }
 }

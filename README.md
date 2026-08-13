@@ -7,9 +7,11 @@ Sistema web para controlar necessidade → cotação → aprovação → compra 
 O primeiro fluxo executável está pronto:
 
 - SPA responsiva com dashboard, lojas, detalhe de loja, itens, necessidades e diagnóstico;
+- edição de lojas e itens com validação, controle de versão, permissões e auditoria;
+- necessidades com paginação em 100, 250 ou 500 registros e opção para exibir as 2.295 relações de uma vez;
 - planilha DEV nativa validada e snapshot verificado para desenvolvimento seguro;
 - login Google Identity Services para produção;
-- Google Apps Script Web App com `bootstrap` em lote e escrita versionada de necessidades;
+- Google Apps Script Web App com `bootstrap` em lote e escrita versionada de lojas, itens e necessidades;
 - permissões por perfil e escopo de loja no backend;
 - auditoria, máquina de estados e `LockService`;
 - CI e publicação automática no GitHub Pages.
@@ -68,7 +70,7 @@ O Client ID não é segredo. Nunca coloque Client Secret no frontend; este fluxo
    - `GOOGLE_CLIENT_ID`: Client ID OAuth Web.
 3. Execute manualmente `diagnoseSpreadsheet()` no editor e revise o log.
 4. Para adicionar campos técnicos, defina temporariamente `ALLOW_SETUP=SIM` e execute `setupTechnicalColumns()`. O script cria backups de cada aba afetada e remove a autorização ao terminar.
-5. Faça **Deploy → New deployment → Web app**:
+5. Faça **Deploy → New deployment → Web app** na primeira publicação, ou **Deploy → Manage deployments → Edit → New version** para atualizar uma implantação existente:
    - Execute as: **Me**;
    - Who has access: opção que permita ao frontend alcançar o endpoint.
 6. Copie a URL terminada em `/exec`.
@@ -103,7 +105,7 @@ APPS_SCRIPT_URL="https://script.google.com/macros/s/.../exec" GOOGLE_ID_TOKEN="t
 
 ## GitHub
 
-O diretório está pronto para `git init`, commit e push. A criação/publicação do repositório remoto deve ser feita apenas depois de definir a conta ou organização do GitHub.
+O repositório oficial é [Ernands/Or-amento_Compra_Entrega](https://github.com/Ernands/Or-amento_Compra_Entrega). Cada push na branch `main` executa a validação e publica o frontend no GitHub Pages.
 
 ## Testes prioritários
 

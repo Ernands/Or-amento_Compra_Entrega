@@ -56,6 +56,7 @@ const APP_CONFIG = {
     items: "02_ITENS",
     necessities: "03_NECESSIDADES",
     users: "09_USUARIOS",
+    permissions: "10_PERMISSOES",
     history: "12_HISTORICO",
   },
   technicalHeaders: ["created_at", "created_by", "updated_at", "updated_by", "version", "ativo"],
@@ -112,6 +113,10 @@ function dispatchAction(action: string, payload: Record<string, unknown>, spread
       return buildBootstrap(spreadsheet, user);
     case "updateNecessity":
       return updateNecessity(spreadsheet, user, payload);
+    case "updateStore":
+      return updateStore(spreadsheet, user, payload);
+    case "updateItem":
+      return updateItem(spreadsheet, user, payload);
     default:
       throw new ApiException("UNKNOWN_ACTION", "Ação não reconhecida.");
   }
@@ -169,7 +174,7 @@ function updateNecessity(
     if (rowIndex < 0) throw new ApiException("NOT_FOUND", "Necessidade não encontrada.");
     const current = table.rows[rowIndex].slice();
     const storeId = cell(table, current, "ID_Loja");
-    assertCanEditNecessity(user, storeId);
+    assertCanEditNecessity(spreadsheet, user, storeId);
     const versionColumn = columnIndex(table, "version");
     const currentVersion = Number(current[versionColumn] || 1);
     if (currentVersion !== expectedVersion) {
@@ -196,7 +201,7 @@ function updateNecessity(
     const previousRow = range.getValues()[0];
     try {
       range.setValues([current]);
-      appendAudit(spreadsheet, user, id, auditedChanges, String(payload.reason || ""));
+      appendAudit(spreadsheet, user, "NECESSIDADES", id, auditedChanges, String(payload.reason || ""));
       SpreadsheetApp.flush();
     } catch (error) {
       range.setValues([previousRow]);
@@ -207,6 +212,67 @@ function updateNecessity(
   } finally {
     lock.releaseLock();
   }
+}
+
+function updateStore(
+  spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet,
+  user: SystemUser,
+  payload: Record<string, unknown>,
+): unknown {
+  const id = requireString(payload.id, "id");
+  const expectedVersion = requirePositiveInteger(payload.version, "version");
+  const changes = requireChanges(payload.changes, ["name", "city", "state", "capitalUf", "address", "manager", "email", "phone", "status", "notes"]);
+  assertModulePermission(spreadsheet, user, "Lojas", "Editar");
+  assertStoreScope(user, id);
+
+  return withScriptLock(() => {
+    const table = readTable(spreadsheet, APP_CONFIG.sheets.stores, ["ID_Loja", "Loja", "version", "updated_at", "updated_by"]);
+    const { current, rowIndex, currentVersion } = findVersionedRow(table, "ID_Loja", id, expectedVersion, "Loja");
+    const auditedChanges: Array<{ field: string; previous: unknown; next: unknown }> = [];
+    applyChange(table, current, "Loja", changes.name, validateRequiredText, auditedChanges);
+    applyChange(table, current, "Cidade", changes.city, validateShortText, auditedChanges);
+    applyChange(table, current, "UF", changes.state, validateUf, auditedChanges);
+    applyChange(table, current, "Capital_UF", changes.capitalUf, validateShortText, auditedChanges);
+    applyChange(table, current, "Endereço", changes.address, validateText, auditedChanges);
+    applyChange(table, current, "Responsável", changes.manager, validateShortText, auditedChanges);
+    applyChange(table, current, "E-mail", changes.email, validateOptionalEmail, auditedChanges);
+    applyChange(table, current, "Telefone", changes.phone, validateShortText, auditedChanges);
+    applyChange(table, current, "Status", changes.status, validateRequiredText, auditedChanges);
+    applyChange(table, current, "Observações", changes.notes, validateText, auditedChanges);
+    persistUpdatedRow(spreadsheet, table, rowIndex, current, currentVersion, user, "LOJAS", id, auditedChanges, String(payload.reason || ""));
+    return { store: mapStore(table, current) };
+  });
+}
+
+function updateItem(
+  spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet,
+  user: SystemUser,
+  payload: Record<string, unknown>,
+): unknown {
+  const id = requireString(payload.id, "id");
+  const expectedVersion = requirePositiveInteger(payload.version, "version");
+  const changes = requireChanges(payload.changes, ["operationalCode", "group", "area", "name", "specification", "defaultQuantity", "definitionStatus", "active", "route1", "route2", "route3", "notes"]);
+  assertModulePermission(spreadsheet, user, "Itens", "Editar");
+
+  return withScriptLock(() => {
+    const table = readTable(spreadsheet, APP_CONFIG.sheets.items, ["ID_Item", "Item", "version", "updated_at", "updated_by"]);
+    const { current, rowIndex, currentVersion } = findVersionedRow(table, "ID_Item", id, expectedVersion, "Item");
+    const auditedChanges: Array<{ field: string; previous: unknown; next: unknown }> = [];
+    applyChange(table, current, "Código_Original", changes.operationalCode, validateRequiredText, auditedChanges);
+    applyChange(table, current, "Grupo", changes.group, validateRequiredText, auditedChanges);
+    applyChange(table, current, "Área", changes.area, validateRequiredText, auditedChanges);
+    applyChange(table, current, "Item", changes.name, validateRequiredText, auditedChanges);
+    applyChange(table, current, "Especificação", changes.specification, validateText, auditedChanges);
+    applyChange(table, current, "Qtd_Padrão_Loja", changes.defaultQuantity, validatePositiveNumber, auditedChanges);
+    applyChange(table, current, "Status_Especificação", changes.definitionStatus, validateDefinitionStatus, auditedChanges);
+    applyChange(table, current, "Ativo", changes.active, validateYesNo, auditedChanges);
+    applyChange(table, current, "Rota_1", changes.route1, validateShortText, auditedChanges);
+    applyChange(table, current, "Rota_2", changes.route2, validateShortText, auditedChanges);
+    applyChange(table, current, "Rota_3", changes.route3, validateShortText, auditedChanges);
+    applyChange(table, current, "Observações", changes.notes, validateText, auditedChanges);
+    persistUpdatedRow(spreadsheet, table, rowIndex, current, currentVersion, user, "ITENS", id, auditedChanges, String(payload.reason || ""));
+    return { item: mapItem(table, current) };
+  });
 }
 
 function verifyGoogleCredential(token: string): TokenClaims {
@@ -245,17 +311,34 @@ function findAuthorizedUser(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadshee
   };
 }
 
-function assertCanEditNecessity(user: SystemUser, storeId: string): void {
-  const editableProfiles = ["ADMINISTRADOR", "GESTOR", "RESPONSAVEL_LOJA"];
-  if (editableProfiles.indexOf(user.profile) < 0) throw new ApiException("PERMISSION_DENIED", "Você não possui permissão para alterar necessidades.");
+function assertCanEditNecessity(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet, user: SystemUser, storeId: string): void {
+  assertModulePermission(spreadsheet, user, "Necessidades", "Editar");
+  assertStoreScope(user, storeId);
+}
+
+function assertStoreScope(user: SystemUser, storeId: string): void {
   if (user.allowedStoreIds !== "TODAS" && user.allowedStoreIds.indexOf(storeId) < 0) {
     throw new ApiException("PERMISSION_DENIED", "Esta loja não está no seu escopo de acesso.");
+  }
+}
+
+function assertModulePermission(
+  spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet,
+  user: SystemUser,
+  module: string,
+  action: string,
+): void {
+  const table = readTable(spreadsheet, APP_CONFIG.sheets.permissions, ["Perfil", "Módulo", action]);
+  const row = table.rows.find((candidate) => normalizeProfile(cell(table, candidate, "Perfil")) === user.profile && normalizeHeader(cell(table, candidate, "Módulo")) === normalizeHeader(module));
+  if (!row || !isYes(cell(table, row, action))) {
+    throw new ApiException("PERMISSION_DENIED", `Você não possui permissão para ${normalizeText(action)} em ${module}.`);
   }
 }
 
 function appendAudit(
   spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet,
   user: SystemUser,
+  module: string,
   recordId: string,
   changes: Array<{ field: string; previous: unknown; next: unknown }>,
   reason: string,
@@ -271,7 +354,7 @@ function appendAudit(
     setCell(table, row, "ID_Histórico", `HIS-${String(nextNumber++).padStart(6, "0")}`);
     setCell(table, row, "Data_Hora", new Date());
     setCell(table, row, "ID_Usuário", user.id);
-    setCell(table, row, "Módulo", "NECESSIDADES");
+    setCell(table, row, "Módulo", module);
     setCell(table, row, "ID_Registro", recordId);
     setCell(table, row, "Ação", "ALTERACAO");
     setCell(table, row, "Campo", change.field);
@@ -283,6 +366,66 @@ function appendAudit(
     return row;
   });
   table.sheet.getRange(table.sheet.getLastRow() + 1, 1, output.length, table.headers.length).setValues(output);
+}
+
+function withScriptLock<T>(callback: () => T): T {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new ApiException("CONCURRENT_REQUEST", "Outro usuário está atualizando a planilha. Tente novamente.");
+  try { return callback(); } finally { lock.releaseLock(); }
+}
+
+function requireChanges(value: unknown, allowedKeys: string[]): Record<string, unknown> {
+  if (!isRecord(value)) throw new ApiException("VALIDATION_ERROR", "Nenhuma alteração foi informada.");
+  const invalidKey = Object.keys(value).find((key) => allowedKeys.indexOf(key) < 0);
+  if (invalidKey) throw new ApiException("VALIDATION_ERROR", `Campo não permitido: ${invalidKey}`);
+  return value;
+}
+
+function findVersionedRow(
+  table: SheetTable,
+  idHeader: string,
+  id: string,
+  expectedVersion: number,
+  entityLabel: string,
+): { current: unknown[]; rowIndex: number; currentVersion: number } {
+  const idColumn = columnIndex(table, idHeader);
+  const rowIndex = table.rows.findIndex((row) => String(row[idColumn] || "").trim() === id);
+  if (rowIndex < 0) throw new ApiException("NOT_FOUND", `${entityLabel} não encontrado(a).`);
+  const current = table.rows[rowIndex].slice();
+  const currentVersion = Number(current[columnIndex(table, "version")] || 1);
+  if (currentVersion !== expectedVersion) {
+    throw new ApiException("VERSION_CONFLICT", "Este registro foi alterado por outro usuário. Atualize os dados antes de salvar novamente.", { currentVersion });
+  }
+  return { current, rowIndex, currentVersion };
+}
+
+function persistUpdatedRow(
+  spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet,
+  table: SheetTable,
+  rowIndex: number,
+  current: unknown[],
+  currentVersion: number,
+  user: SystemUser,
+  module: string,
+  recordId: string,
+  auditedChanges: Array<{ field: string; previous: unknown; next: unknown }>,
+  reason: string,
+): void {
+  if (!auditedChanges.length) throw new ApiException("VALIDATION_ERROR", "Nenhuma alteração válida foi informada.");
+  current[columnIndex(table, "version")] = currentVersion + 1;
+  current[columnIndex(table, "updated_at")] = new Date();
+  current[columnIndex(table, "updated_by")] = user.id;
+  const range = table.sheet.getRange(table.headerRow + rowIndex + 1, 1, 1, table.headers.length);
+  const previousRow = range.getValues()[0];
+  try {
+    range.setValues([current]);
+    appendAudit(spreadsheet, user, module, recordId, auditedChanges, reason);
+    SpreadsheetApp.flush();
+  } catch (error) {
+    range.setValues([previousRow]);
+    SpreadsheetApp.flush();
+    throw error;
+  }
 }
 
 function readTable(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet, sheetName: string, requiredHeaders: string[]): SheetTable {
@@ -303,11 +446,11 @@ function readTable(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet, sheetN
 
 function mapStore(table: SheetTable, row: unknown[]) {
   const id = cell(table, row, "ID_Loja");
-  return { id, code: cell(table, row, "Código") || id, name: cell(table, row, "Loja") || cell(table, row, "Nome"), city: cell(table, row, "Cidade"), state: cell(table, row, "UF"), region: cell(table, row, "Região") || cell(table, row, "Capital_UF"), manager: cell(table, row, "Responsável"), email: cell(table, row, "E-mail"), phone: cell(table, row, "Telefone"), status: cell(table, row, "Status") };
+  return { id, code: cell(table, row, "Código") || id, name: cell(table, row, "Loja") || cell(table, row, "Nome"), city: cell(table, row, "Cidade"), state: cell(table, row, "UF"), region: cell(table, row, "Região") || cell(table, row, "Capital_UF"), manager: cell(table, row, "Responsável"), email: cell(table, row, "E-mail"), phone: cell(table, row, "Telefone"), status: cell(table, row, "Status"), address: cell(table, row, "Endereço"), notes: cell(table, row, "Observações"), version: Number(cell(table, row, "version") || 1) };
 }
 
 function mapItem(table: SheetTable, row: unknown[]) {
-  return { id: cell(table, row, "ID_Item"), operationalCode: cell(table, row, "Código_Original"), group: cell(table, row, "Grupo"), area: cell(table, row, "Área"), name: cell(table, row, "Item"), specification: cell(table, row, "Especificação"), defaultQuantity: Number(cell(table, row, "Qtd_Padrão_Loja") || 1), definitionStatus: normalizeText(cell(table, row, "Status_Especificação")).indexOf("pendente") >= 0 ? "PENDENTE_DEFINICAO" : "LIBERADO_PARA_COTACAO", duplicateOperationalCode: isYes(cell(table, row, "Código_Duplicado")), active: !cell(table, row, "Ativo") || isYes(cell(table, row, "Ativo")) };
+  return { id: cell(table, row, "ID_Item"), operationalCode: cell(table, row, "Código_Original"), group: cell(table, row, "Grupo"), area: cell(table, row, "Área"), name: cell(table, row, "Item"), specification: cell(table, row, "Especificação"), defaultQuantity: Number(cell(table, row, "Qtd_Padrão_Loja") || 1), definitionStatus: normalizeText(cell(table, row, "Status_Especificação")).indexOf("pendente") >= 0 ? "PENDENTE_DEFINICAO" : "LIBERADO_PARA_COTACAO", duplicateOperationalCode: isYes(cell(table, row, "Código_Duplicado")), active: !cell(table, row, "Ativo") || isYes(cell(table, row, "Ativo")), route1: cell(table, row, "Rota_1"), route2: cell(table, row, "Rota_2"), route3: cell(table, row, "Rota_3"), notes: cell(table, row, "Observações"), version: Number(cell(table, row, "version") || 1) };
 }
 
 function mapNecessity(table: SheetTable, row: unknown[]) {
@@ -351,6 +494,12 @@ function isRecord(value: unknown): value is Record<string, unknown> { return Boo
 function requireString(value: unknown, field: string): string { if (typeof value !== "string" || !value.trim()) throw new ApiException("VALIDATION_ERROR", `Campo obrigatório: ${field}`); return value.trim(); }
 function requirePositiveInteger(value: unknown, field: string): number { const parsed = Number(value); if (!Number.isInteger(parsed) || parsed < 1) throw new ApiException("VALIDATION_ERROR", `${field} deve ser inteiro positivo.`); return parsed; }
 function validatePositiveNumber(value: unknown): number { const parsed = Number(value); if (!Number.isFinite(parsed) || parsed <= 0) throw new ApiException("VALIDATION_ERROR", "Quantidade deve ser maior que zero."); return parsed; }
+function validateRequiredText(value: unknown): string { const result = requireString(value, "valor"); if (result.length > 500) throw new ApiException("VALIDATION_ERROR", "Texto obrigatório muito longo."); return result; }
+function validateShortText(value: unknown): string { if (typeof value !== "string" || value.length > 500) throw new ApiException("VALIDATION_ERROR", "Texto inválido ou muito longo."); return value.trim(); }
+function validateUf(value: unknown): string { const result = validateShortText(value).toLocaleUpperCase(); if (result && !/^[A-Z]{2}$/.test(result)) throw new ApiException("VALIDATION_ERROR", "UF deve conter duas letras."); return result; }
+function validateOptionalEmail(value: unknown): string { const result = validateShortText(value).toLocaleLowerCase(); if (result && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result)) throw new ApiException("VALIDATION_ERROR", "E-mail inválido."); return result; }
+function validateDefinitionStatus(value: unknown): string { const status = requireString(value, "definitionStatus"); if (status === "PENDENTE_DEFINICAO") return "Pendente definição"; if (status === "LIBERADO_PARA_COTACAO") return "Liberado para cotação"; throw new ApiException("VALIDATION_ERROR", "Status de especificação inválido."); }
+function validateYesNo(value: unknown): string { if (typeof value !== "boolean") throw new ApiException("VALIDATION_ERROR", "Ativo deve ser verdadeiro ou falso."); return value ? "Sim" : "Não"; }
 function validatePriority(value: unknown): string { const result = requireString(value, "priority").toLocaleUpperCase(); if (["BAIXA", "MEDIA", "ALTA", "CRITICA"].indexOf(normalizeText(result).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleUpperCase()) < 0) throw new ApiException("VALIDATION_ERROR", "Prioridade inválida."); return result; }
 function validateText(value: unknown): string { if (typeof value !== "string" || value.length > 2000) throw new ApiException("VALIDATION_ERROR", "Texto inválido ou muito longo."); return value.trim(); }
 function validateStatus(value: unknown): string { const status = requireString(value, "status").toLocaleUpperCase(); if (!(status in STATUS_TRANSITIONS)) throw new ApiException("VALIDATION_ERROR", "Status inválido."); return status; }

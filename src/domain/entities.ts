@@ -23,6 +23,9 @@ export interface Store {
   email: string;
   phone: string;
   status: string;
+  address: string;
+  notes: string;
+  version: number;
 }
 
 export interface Item {
@@ -36,6 +39,11 @@ export interface Item {
   definitionStatus: "LIBERADO_PARA_COTACAO" | "PENDENTE_DEFINICAO";
   duplicateOperationalCode: boolean;
   active: boolean;
+  route1: string;
+  route2: string;
+  route3: string;
+  notes: string;
+  version: number;
 }
 
 export interface Necessity {
@@ -45,6 +53,45 @@ export interface Necessity {
   quantity: number;
   priority: "BAIXA" | "MEDIA" | "ALTA" | "CRITICA";
   status: NecessityStatus;
+  version: number;
+}
+
+export interface UpdateStoreInput {
+  id: string;
+  version: number;
+  changes: {
+    name: string;
+    city: string;
+    state: string;
+    capitalUf: string;
+    address: string;
+    manager: string;
+    email: string;
+    phone: string;
+    status: string;
+    notes: string;
+  };
+  reason?: string;
+}
+
+export interface UpdateItemInput {
+  id: string;
+  version: number;
+  changes: {
+    operationalCode: string;
+    group: string;
+    area: string;
+    name: string;
+    specification: string;
+    defaultQuantity: number;
+    definitionStatus: Item["definitionStatus"];
+    active: boolean;
+    route1: string;
+    route2: string;
+    route3: string;
+    notes: string;
+  };
+  reason?: string;
 }
 
 export interface DashboardMetrics {

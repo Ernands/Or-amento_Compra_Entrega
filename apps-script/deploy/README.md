@@ -88,5 +88,7 @@ O teste autenticado de `bootstrap` também aceita `GOOGLE_ID_TOKEN` temporário.
 - `POST {"action":"health"}`: health check público.
 - `POST {"action":"bootstrap","credential":"<Google ID token>","payload":{}}`: sessão, lojas, itens e necessidades filtradas pelo escopo do usuário.
 - `POST {"action":"updateNecessity","credential":"<Google ID token>","payload":{...}}`: escrita versionada com permissão, validação de status, `LockService` e auditoria em `12_HISTORICO`.
+- `POST {"action":"updateStore","credential":"<Google ID token>","payload":{...}}`: edição versionada de lojas com escopo, permissão do módulo e auditoria.
+- `POST {"action":"updateItem","credential":"<Google ID token>","payload":{...}}`: edição versionada do catálogo com permissão do módulo e auditoria.
 
 Todo acesso à planilha usa `SPREADSHEET_ID` via `PropertiesService`. O ID não é hardcoded em `Code.gs`.

@@ -20,6 +20,9 @@ assert.deepEqual(
 );
 assert.match(deployCode, /function doGet\(event\)/, "doGet(event) ausente.");
 assert.match(deployCode, /function doPost\(event\)/, "doPost(event) ausente.");
+assert.match(deployCode, /function updateStore\(/, "updateStore ausente.");
+assert.match(deployCode, /function updateItem\(/, "updateItem ausente.");
+assert.match(deployCode, /function assertModulePermission\(/, "Validação central de permissões ausente.");
 assert.match(deployCode, /getProperty\("SPREADSHEET_ID"\)/, "SPREADSHEET_ID não usa PropertiesService.");
 assert.match(deployCode, /getProperty\("GOOGLE_CLIENT_ID"\)/, "GOOGLE_CLIENT_ID não usa PropertiesService.");
 assert.doesNotMatch(
@@ -73,3 +76,4 @@ console.log("✓ urlFetchWhitelist limitada a https://oauth2.googleapis.com/toke
 console.log("✓ SPREADSHEET_ID e GOOGLE_CLIENT_ID usam PropertiesService");
 console.log("✓ ID da planilha DEV não está hardcoded em Code.gs");
 console.log("✓ doGet health e doPost health responderam corretamente");
+console.log("✓ updateStore e updateItem compilados com permissão centralizada");

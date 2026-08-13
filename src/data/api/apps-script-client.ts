@@ -29,7 +29,7 @@ export class AppsScriptClient {
     private readonly credential: string,
   ) {}
 
-  async call<T>(action: string, payload: Record<string, unknown> = {}): Promise<T> {
+  async call<T>(action: string, payload: object = {}): Promise<T> {
     const response = await fetch(this.endpoint, {
       method: "POST",
       redirect: "follow",
