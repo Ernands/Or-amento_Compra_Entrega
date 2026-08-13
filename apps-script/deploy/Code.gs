@@ -82,6 +82,8 @@ function dispatchAction(action, payload, spreadsheet, user) {
             return createQuote(spreadsheet, user, payload);
         case "updateQuote":
             return updateQuote(spreadsheet, user, payload);
+        case "deleteQuote":
+            return deleteQuote(spreadsheet, user, payload);
         case "selectQuote":
             return selectQuote(spreadsheet, user, payload);
         case "updateNecessity":
@@ -98,6 +100,7 @@ function buildBootstrap(spreadsheet, user) {
     const storesTable = readTable(spreadsheet, APP_CONFIG.sheets.stores, ["ID_Loja", "Loja", "Status"]);
     const itemsTable = readTable(spreadsheet, APP_CONFIG.sheets.items, ["ID_Item", "Código_Original", "Item", "Status_Especificação"]);
     const necessitiesTable = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "ID_Loja", "ID_Item", "Qtd_Planejada", "Status"]);
+    const quotesTable = readTable(spreadsheet, APP_CONFIG.sheets.quotes, ["ID_Cotação", "ID_Necessidade", "ID_Loja", "ativo"]);
     const allStores = storesTable.rows.map((row) => mapStore(storesTable, row));
     const stores = user.allowedStoreIds === "TODAS" ? allStores : allStores.filter((store) => user.allowedStoreIds.indexOf(store.id) >= 0);
     const allowedStoreIds = Object.fromEntries(stores.map((store) => [store.id, true]));
@@ -106,6 +109,9 @@ function buildBootstrap(spreadsheet, user) {
         .filter((need) => Boolean(allowedStoreIds[need.storeId]));
     const referencedItems = Object.fromEntries(necessities.map((need) => [need.itemId, true]));
     const items = itemsTable.rows.map((row) => mapItem(itemsTable, row)).filter((item) => Boolean(referencedItems[item.id]));
+    const activeQuoteNecessityIds = Object.keys(Object.fromEntries(quotesTable.rows
+        .filter((row) => isStoreAllowed(user, cell(quotesTable, row, "ID_Loja")) && isActiveQuoteRow(quotesTable, row))
+        .map((row) => [cell(quotesTable, row, "ID_Necessidade"), true]))).filter(Boolean);
     return {
         source: {
             kind: "apps-script",
@@ -120,27 +126,29 @@ function buildBootstrap(spreadsheet, user) {
         stores,
         items,
         necessities,
+        activeQuoteNecessityIds,
     };
 }
 function buildQuotesWorkspace(spreadsheet, user) {
     assertModulePermission(spreadsheet, user, "Cotações", "Visualizar");
     const suppliersTable = readTable(spreadsheet, APP_CONFIG.sheets.suppliers, ["ID_Fornecedor", "Fornecedor", "Ativo", "version"]);
-    const quotesTable = readTable(spreadsheet, APP_CONFIG.sheets.quotes, ["ID_Cotação", "ID_Necessidade", "ID_Loja", "ID_Item", "ID_Fornecedor", "Valor_Total", "Status", "version"]);
+    const quotesTable = readTable(spreadsheet, APP_CONFIG.sheets.quotes, ["ID_Cotação", "ID_Necessidade", "ID_Loja", "ID_Item", "ID_Fornecedor", "Valor_Total", "Status", "version", "ativo"]);
     const routesTable = readTable(spreadsheet, APP_CONFIG.sheets.routes, ["ID_Rota", "ID_Item", "Ordem", "Origem_Destino", "Ativo"]);
     const necessitiesTable = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "ID_Loja", "ID_Item"]);
-    const permissionTable = readTable(spreadsheet, APP_CONFIG.sheets.permissions, ["Perfil", "Módulo", "Visualizar", "Criar", "Editar"]);
+    const permissionTable = readTable(spreadsheet, APP_CONFIG.sheets.permissions, ["Perfil", "Módulo", "Visualizar", "Criar", "Editar", "Excluir"]);
     const options = readQuoteOptions(spreadsheet);
     const allowedNeeds = necessitiesTable.rows.filter((row) => isStoreAllowed(user, cell(necessitiesTable, row, "ID_Loja")));
     const allowedItemIds = Object.fromEntries(allowedNeeds.map((row) => [cell(necessitiesTable, row, "ID_Item"), true]));
     return {
         suppliers: suppliersTable.rows.map((row) => mapSupplier(suppliersTable, row)),
-        quotes: quotesTable.rows.filter((row) => isStoreAllowed(user, cell(quotesTable, row, "ID_Loja"))).map((row) => mapQuote(quotesTable, row)),
+        quotes: quotesTable.rows.filter((row) => isStoreAllowed(user, cell(quotesTable, row, "ID_Loja")) && isActiveQuoteRow(quotesTable, row)).map((row) => mapQuote(quotesTable, row)),
         routes: routesTable.rows.filter((row) => Boolean(allowedItemIds[cell(routesTable, row, "ID_Item")])).map((row) => mapPurchaseRoute(routesTable, row)),
         options,
         permissions: {
             view: hasModulePermission(permissionTable, user, "Cotações", "Visualizar"),
             create: hasModulePermission(permissionTable, user, "Cotações", "Criar"),
             edit: hasModulePermission(permissionTable, user, "Cotações", "Editar"),
+            delete: hasModulePermission(permissionTable, user, "Cotações", "Excluir"),
             select: hasModulePermission(permissionTable, user, "Cotações", "Editar"),
             createSupplier: hasModulePermission(permissionTable, user, "Fornecedores", "Criar"),
         },
@@ -261,10 +269,12 @@ function updateQuote(spreadsheet, user, payload) {
     return withScriptLock(() => {
         const id = requireString(payload.id, "id");
         const expectedVersion = requirePositiveInteger(payload.version, "version");
-        const changes = requireChanges(payload.changes, ["supplierId", "origin", "unitPrice", "quantity", "freight", "otherCosts", "paymentMethod", "leadTimeDays", "proposalValidUntil", "link", "status", "quoteDate", "notes"]);
-        const table = readTable(spreadsheet, APP_CONFIG.sheets.quotes, ["ID_Cotação", "ID_Necessidade", "ID_Loja", "ID_Fornecedor", "Status", "Selecionada", "version", "updated_at", "updated_by"]);
+        const changes = requireChanges(payload.changes, ["necessityId", "supplierId", "origin", "unitPrice", "quantity", "freight", "otherCosts", "paymentMethod", "leadTimeDays", "proposalValidUntil", "link", "status", "quoteDate", "notes"]);
+        const table = readTable(spreadsheet, APP_CONFIG.sheets.quotes, ["ID_Cotação", "ID_Necessidade", "ID_Loja", "ID_Item", "ID_Fornecedor", "Status", "Selecionada", "version", "updated_at", "updated_by", "ativo"]);
         const found = findVersionedRow(table, "ID_Cotação", id, expectedVersion, "Cotação");
         assertStoreScope(user, cell(table, found.current, "ID_Loja"));
+        if (!isActiveQuoteRow(table, found.current))
+            throw new ApiException("LOCKED_RECORD", "A cotação foi excluída e não pode mais ser editada.");
         if (isYes(cell(table, found.current, "Selecionada")) || normalizeQuoteStatus(cell(table, found.current, "Status")) === "SELECIONADA") {
             throw new ApiException("LOCKED_RECORD", "A proposta selecionada está bloqueada. Selecione outra proposta antes de editá-la.");
         }
@@ -273,17 +283,119 @@ function updateQuote(spreadsheet, user, payload) {
         const supplier = findRowById(suppliersTable, "ID_Fornecedor", supplierId, "Fornecedor").row;
         if (!isYes(cell(suppliersTable, supplier, "Ativo")))
             throw new ApiException("VALIDATION_ERROR", "O fornecedor selecionado está inativo.");
-        const necessitiesTable = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "Qtd_Planejada"]);
-        const necessityId = cell(table, found.current, "ID_Necessidade");
-        const necessity = findRowById(necessitiesTable, "ID_Necessidade", necessityId, "Necessidade").row;
+        const necessitiesTable = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "ID_Loja", "ID_Item", "Qtd_Planejada", "Status", "version", "updated_at", "updated_by"]);
+        const previousNecessityId = cell(table, found.current, "ID_Necessidade");
+        const necessityId = requireString(changes.necessityId, "necessityId");
+        const necessityMatch = findRowById(necessitiesTable, "ID_Necessidade", necessityId, "Necessidade");
+        const necessity = necessityMatch.row.slice();
+        const storeId = cell(necessitiesTable, necessity, "ID_Loja");
+        const itemId = cell(necessitiesTable, necessity, "ID_Item");
+        assertStoreScope(user, storeId);
+        const targetNecessityStatus = assertNecessityCanBeQuoted(cell(necessitiesTable, necessity, "Status"));
         const plannedQuantity = validatePositiveNumber(cell(necessitiesTable, necessity, "Qtd_Planejada"));
         const values = validateQuoteValues(changes, readQuoteOptions(spreadsheet), plannedQuantity);
         const audited = [];
+        applyChange(table, found.current, "ID_Necessidade", necessityId, (value) => value, audited);
+        applyChange(table, found.current, "ID_Loja", storeId, (value) => value, audited);
+        applyChange(table, found.current, "ID_Item", itemId, (value) => value, audited);
         applyChange(table, found.current, "ID_Fornecedor", supplierId, (value) => value, audited);
         applyQuoteChanges(table, found.current, values, audited);
         applyChange(table, found.current, "Nota_Fornecedor", cell(suppliersTable, supplier, "Nota_Fornecedor"), (value) => value, audited);
-        persistUpdatedRow(spreadsheet, table, found.rowIndex, found.current, found.currentVersion, user, "COTACOES", id, audited, String(payload.reason || ""));
+        if (!audited.length)
+            throw new ApiException("VALIDATION_ERROR", "Nenhuma alteração válida foi informada.");
+        const now = new Date();
+        setCell(table, found.current, "version", found.currentVersion + 1);
+        setCell(table, found.current, "updated_at", now);
+        setCell(table, found.current, "updated_by", user.id);
+        const writes = [];
+        const quoteRange = table.sheet.getRange(physicalRowNumber(table, found.rowIndex), 1, 1, table.headers.length);
+        writes.push({ range: quoteRange, previous: quoteRange.getValues()[0], next: found.current });
+        const audits = [{ module: "COTACOES", recordId: id, changes: audited, reason: String(payload.reason || "Cotação editada."), action: "ALTERACAO" }];
+        if (necessityId !== previousNecessityId) {
+            if (targetNecessityStatus === "NAO_INICIADO") {
+                const previousStatus = cell(necessitiesTable, necessity, "Status");
+                setCell(necessitiesTable, necessity, "Status", "EM_COTACAO");
+                setCell(necessitiesTable, necessity, "version", Number(cell(necessitiesTable, necessity, "version") || 1) + 1);
+                setCell(necessitiesTable, necessity, "updated_at", now);
+                setCell(necessitiesTable, necessity, "updated_by", user.id);
+                const range = necessitiesTable.sheet.getRange(physicalRowNumber(necessitiesTable, necessityMatch.rowIndex), 1, 1, necessitiesTable.headers.length);
+                writes.push({ range, previous: range.getValues()[0], next: necessity });
+                audits.push({ module: "NECESSIDADES", recordId: necessityId, changes: [{ field: "Status", previous: previousStatus, next: "EM_COTACAO" }], reason: `Cotação vinculada: ${id}`, action: "ALTERACAO" });
+            }
+            const previousMatch = findRowById(necessitiesTable, "ID_Necessidade", previousNecessityId, "Necessidade");
+            const previousNecessity = previousMatch.row.slice();
+            if (normalizeStatus(cell(necessitiesTable, previousNecessity, "Status")) === "EM_COTACAO" && !hasOtherActiveQuoteForNecessity(table, previousNecessityId, id)) {
+                const previousStatus = cell(necessitiesTable, previousNecessity, "Status");
+                setCell(necessitiesTable, previousNecessity, "Status", "NAO_INICIADO");
+                setCell(necessitiesTable, previousNecessity, "version", Number(cell(necessitiesTable, previousNecessity, "version") || 1) + 1);
+                setCell(necessitiesTable, previousNecessity, "updated_at", now);
+                setCell(necessitiesTable, previousNecessity, "updated_by", user.id);
+                const range = necessitiesTable.sheet.getRange(physicalRowNumber(necessitiesTable, previousMatch.rowIndex), 1, 1, necessitiesTable.headers.length);
+                writes.push({ range, previous: range.getValues()[0], next: previousNecessity });
+                audits.push({ module: "NECESSIDADES", recordId: previousNecessityId, changes: [{ field: "Status", previous: previousStatus, next: "NAO_INICIADO" }], reason: `Última cotação removida pelo novo vínculo de ${id}`, action: "ALTERACAO" });
+            }
+        }
+        try {
+            writes.forEach((write) => write.range.setValues([write.next]));
+            appendAuditBatch(spreadsheet, user, audits);
+            SpreadsheetApp.flush();
+        }
+        catch (error) {
+            writes.forEach((write) => write.range.setValues([write.previous]));
+            SpreadsheetApp.flush();
+            throw error;
+        }
         return { quote: mapQuote(table, found.current) };
+    });
+}
+function deleteQuote(spreadsheet, user, payload) {
+    assertModulePermission(spreadsheet, user, "Cotações", "Excluir");
+    return withScriptLock(() => {
+        const id = requireString(payload.id, "id");
+        const expectedVersion = requirePositiveInteger(payload.version, "version");
+        const table = readTable(spreadsheet, APP_CONFIG.sheets.quotes, ["ID_Cotação", "ID_Necessidade", "ID_Loja", "Status", "Selecionada", "version", "updated_at", "updated_by", "ativo"]);
+        const found = findVersionedRow(table, "ID_Cotação", id, expectedVersion, "Cotação");
+        assertStoreScope(user, cell(table, found.current, "ID_Loja"));
+        if (!isActiveQuoteRow(table, found.current))
+            throw new ApiException("LOCKED_RECORD", "A cotação já foi excluída.");
+        if (isQuoteMarkedSelected(table, found.current))
+            throw new ApiException("LOCKED_RECORD", "Uma proposta selecionada não pode ser excluída.");
+        const audited = [];
+        applyChange(table, found.current, "Status", "Descartada", (value) => value, audited);
+        applyChange(table, found.current, "Selecionada", false, validateYesNo, audited);
+        applyChange(table, found.current, "ativo", false, validateYesNo, audited);
+        const now = new Date();
+        setCell(table, found.current, "version", found.currentVersion + 1);
+        setCell(table, found.current, "updated_at", now);
+        setCell(table, found.current, "updated_by", user.id);
+        const quoteRange = table.sheet.getRange(physicalRowNumber(table, found.rowIndex), 1, 1, table.headers.length);
+        const writes = [{ range: quoteRange, previous: quoteRange.getValues()[0], next: found.current }];
+        const audits = [{ module: "COTACOES", recordId: id, changes: audited, reason: String(payload.reason || "Cotação excluída pelo sistema."), action: "EXCLUSAO" }];
+        const necessityId = cell(table, found.current, "ID_Necessidade");
+        const necessitiesTable = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "ID_Loja", "Status", "version", "updated_at", "updated_by"]);
+        const necessityMatch = findRowById(necessitiesTable, "ID_Necessidade", necessityId, "Necessidade");
+        const necessity = necessityMatch.row.slice();
+        if (normalizeStatus(cell(necessitiesTable, necessity, "Status")) === "EM_COTACAO" && !hasOtherActiveQuoteForNecessity(table, necessityId, id)) {
+            const previousStatus = cell(necessitiesTable, necessity, "Status");
+            setCell(necessitiesTable, necessity, "Status", "NAO_INICIADO");
+            setCell(necessitiesTable, necessity, "version", Number(cell(necessitiesTable, necessity, "version") || 1) + 1);
+            setCell(necessitiesTable, necessity, "updated_at", now);
+            setCell(necessitiesTable, necessity, "updated_by", user.id);
+            const necessityRange = necessitiesTable.sheet.getRange(physicalRowNumber(necessitiesTable, necessityMatch.rowIndex), 1, 1, necessitiesTable.headers.length);
+            writes.push({ range: necessityRange, previous: necessityRange.getValues()[0], next: necessity });
+            audits.push({ module: "NECESSIDADES", recordId: necessityId, changes: [{ field: "Status", previous: previousStatus, next: "NAO_INICIADO" }], reason: `Última cotação ativa excluída: ${id}`, action: "ALTERACAO" });
+        }
+        try {
+            writes.forEach((write) => write.range.setValues([write.next]));
+            appendAuditBatch(spreadsheet, user, audits);
+            SpreadsheetApp.flush();
+        }
+        catch (error) {
+            writes.forEach((write) => write.range.setValues([write.previous]));
+            SpreadsheetApp.flush();
+            throw error;
+        }
+        return { id };
     });
 }
 function selectQuote(spreadsheet, user, payload) {
@@ -295,6 +407,8 @@ function selectQuote(spreadsheet, user, payload) {
         const table = readTable(spreadsheet, APP_CONFIG.sheets.quotes, ["ID_Cotação", "ID_Necessidade", "ID_Loja", "Quantidade", "Status", "Selecionada", "Validade_Proposta", "version", "updated_at", "updated_by"]);
         const target = findVersionedRow(table, "ID_Cotação", id, expectedVersion, "Cotação");
         assertStoreScope(user, cell(table, target.current, "ID_Loja"));
+        if (!isActiveQuoteRow(table, target.current))
+            throw new ApiException("LOCKED_RECORD", "A cotação foi excluída e não pode ser selecionada.");
         if (normalizeQuoteStatus(cell(table, target.current, "Status")) !== "RECEBIDA")
             throw new ApiException("INVALID_STATUS", "Somente propostas com status RECEBIDA podem ser selecionadas.");
         const validUntil = dateCell(table, target.current, "Validade_Proposta");
@@ -303,14 +417,14 @@ function selectQuote(spreadsheet, user, payload) {
         const necessityId = cell(table, target.current, "ID_Necessidade");
         const comparableRows = table.rows.filter((row) => {
             const status = normalizeQuoteStatus(cell(table, row, "Status"));
-            return cell(table, row, "ID_Necessidade") === necessityId && ["RECEBIDA", "SELECIONADA"].indexOf(status) >= 0;
+            return isActiveQuoteRow(table, row) && cell(table, row, "ID_Necessidade") === necessityId && ["RECEBIDA", "SELECIONADA"].indexOf(status) >= 0;
         });
         if (!areQuoteQuantitiesComparable(comparableRows.map((row) => Number(cell(table, row, "Quantidade"))))) {
             throw new ApiException("QUANTITY_MISMATCH", "Existem propostas com quantidades diferentes para esta necessidade. Corrija-as antes de selecionar uma proposta.");
         }
         const affected = table.rows
             .map((row, rowIndex) => ({ row: row.slice(), rowIndex }))
-            .filter((entry) => cell(table, entry.row, "ID_Necessidade") === necessityId && (cell(table, entry.row, "ID_Cotação") === id || isQuoteMarkedSelected(table, entry.row)));
+            .filter((entry) => isActiveQuoteRow(table, entry.row) && cell(table, entry.row, "ID_Necessidade") === necessityId && (cell(table, entry.row, "ID_Cotação") === id || isQuoteMarkedSelected(table, entry.row)));
         const writes = [];
         const audits = [];
         const now = new Date();
@@ -957,6 +1071,14 @@ function applyQuoteChanges(table, row, values, audit) {
 }
 function isQuoteMarkedSelected(table, row) {
     return isYes(cell(table, row, "Selecionada")) || normalizeQuoteStatus(cell(table, row, "Status")) === "SELECIONADA";
+}
+function isActiveQuoteRow(table, row) {
+    return !cell(table, row, "ativo") || isYes(cell(table, row, "ativo"));
+}
+function hasOtherActiveQuoteForNecessity(table, necessityId, excludedQuoteId) {
+    return table.rows.some((row) => cell(table, row, "ID_Cotação") !== excludedQuoteId
+        && cell(table, row, "ID_Necessidade") === necessityId
+        && isActiveQuoteRow(table, row));
 }
 function isQuoteSelectionConsistent(table, row) {
     return isYes(cell(table, row, "Selecionada")) && normalizeQuoteStatus(cell(table, row, "Status")) === "SELECIONADA";

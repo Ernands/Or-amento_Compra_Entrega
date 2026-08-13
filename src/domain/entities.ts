@@ -203,6 +203,7 @@ export interface QuotePermissions {
   view: boolean;
   create: boolean;
   edit: boolean;
+  delete: boolean;
   select: boolean;
   createSupplier: boolean;
 }
@@ -259,11 +260,17 @@ export interface CreateQuoteInput extends QuoteValuesInput {
 export interface UpdateQuoteInput {
   id: string;
   version: number;
-  changes: QuoteValuesInput;
+  changes: QuoteValuesInput & { necessityId: string };
   reason?: string;
 }
 
 export interface SelectQuoteInput {
+  id: string;
+  version: number;
+  reason?: string;
+}
+
+export interface DeleteQuoteInput {
   id: string;
   version: number;
   reason?: string;

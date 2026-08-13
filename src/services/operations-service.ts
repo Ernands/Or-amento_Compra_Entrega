@@ -28,17 +28,18 @@ export class OperationsService {
   }
 }
 
-export function buildDashboard(stores: Store[], items: Item[], necessities: Necessity[]) {
+export function buildDashboard(stores: Store[], items: Item[], necessities: Necessity[], activeQuoteNecessityIds?: string[]) {
+  const activeQuoteNeeds = activeQuoteNecessityIds ? new Set(activeQuoteNecessityIds) : null;
   const metrics: DashboardMetrics = {
     stores: stores.length,
     items: items.length,
     necessities: necessities.length,
     pendingDefinition: countStatus(necessities, "PENDENTE_DEFINICAO"),
-    quoted: countAtOrBeyond(necessities, "EM_COTACAO"),
+    quoted: necessities.filter((necessity) => necessity.status === "EM_COTACAO" && (!activeQuoteNeeds || activeQuoteNeeds.has(necessity.id))).length,
     awaitingApproval: countStatus(necessities, "AGUARDANDO_APROVACAO"),
-    approved: countAtOrBeyond(necessities, "APROVADO"),
-    purchased: countAtOrBeyond(necessities, "COMPRADO"),
-    delivered: countAtOrBeyond(necessities, "ENTREGUE"),
+    approved: countStatus(necessities, "APROVADO"),
+    purchased: countStatus(necessities, "COMPRADO"),
+    delivered: countStatus(necessities, "ENTREGUE"),
     completed: countStatus(necessities, "CONCLUIDO"),
     divergences: countStatus(necessities, "DIVERGENCIA"),
     duplicateCodeItems: items.filter((item) => item.duplicateOperationalCode).length,
@@ -47,19 +48,14 @@ export function buildDashboard(stores: Store[], items: Item[], necessities: Nece
     result[item.area] = (result[item.area] ?? 0) + 1;
     return result;
   }, {});
-  return { metrics, stores: buildStoreProgress(stores, necessities), areas };
+  return { metrics, stores: buildStoreProgress(stores, necessities, activeQuoteNeeds), areas };
 }
 
 function countStatus(necessities: Necessity[], status: NecessityStatus): number {
   return necessities.filter((necessity) => necessity.status === status).length;
 }
 
-function countAtOrBeyond(necessities: Necessity[], status: NecessityStatus): number {
-  const minimum = stageScore[status] ?? Number.POSITIVE_INFINITY;
-  return necessities.filter((necessity) => (stageScore[necessity.status] ?? -1) >= minimum).length;
-}
-
-function buildStoreProgress(stores: Store[], necessities: Necessity[]): StoreProgress[] {
+function buildStoreProgress(stores: Store[], necessities: Necessity[], activeQuoteNeeds: Set<string> | null): StoreProgress[] {
   return stores.map((store) => {
     const storeNeeds = necessities.filter((necessity) => necessity.storeId === store.id);
     const earned = storeNeeds.reduce((total, necessity) => total + (stageScore[necessity.status] ?? 0), 0);
@@ -68,10 +64,10 @@ function buildStoreProgress(stores: Store[], necessities: Necessity[]): StorePro
       store,
       total: storeNeeds.length,
       pendingDefinition: countStatus(storeNeeds, "PENDENTE_DEFINICAO"),
-      quoted: countAtOrBeyond(storeNeeds, "EM_COTACAO"),
-      approved: countAtOrBeyond(storeNeeds, "APROVADO"),
-      purchased: countAtOrBeyond(storeNeeds, "COMPRADO"),
-      delivered: countAtOrBeyond(storeNeeds, "ENTREGUE"),
+      quoted: storeNeeds.filter((necessity) => necessity.status === "EM_COTACAO" && (!activeQuoteNeeds || activeQuoteNeeds.has(necessity.id))).length,
+      approved: countStatus(storeNeeds, "APROVADO"),
+      purchased: countStatus(storeNeeds, "COMPRADO"),
+      delivered: countStatus(storeNeeds, "ENTREGUE"),
       completed: countStatus(storeNeeds, "CONCLUIDO"),
       progress: possible === 0 ? 0 : Math.round((earned / possible) * 100),
     };

@@ -79,7 +79,7 @@ export function useOperations() {
 }
 
 function stateFromBootstrap(bootstrap: BootstrapPayload): Omit<OperationsState, "refresh" | "getTechnicalStatus" | "updateStore" | "updateItem"> {
-  const { source, stores, items, necessities } = bootstrap;
+  const { source, stores, items, necessities, activeQuoteNecessityIds } = bootstrap;
   return {
     loading: false,
     error: "",
@@ -87,6 +87,6 @@ function stateFromBootstrap(bootstrap: BootstrapPayload): Omit<OperationsState, 
     stores,
     items,
     necessities,
-    dashboard: buildDashboard(stores, items, necessities),
+    dashboard: buildDashboard(stores, items, necessities, activeQuoteNecessityIds),
   };
 }

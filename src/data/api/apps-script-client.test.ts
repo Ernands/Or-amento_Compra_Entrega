@@ -63,7 +63,8 @@ describe("AppsScriptClient", () => {
     ["quotesWorkspace", {}],
     ["createSupplier", { name: "Fornecedor DEV", active: true }],
     ["createQuote", { necessityId: "NEC-000001", supplierId: "FOR-000001", unitPrice: 10, quantity: 2 }],
-    ["updateQuote", { id: "COT-000001", version: 3, changes: { unitPrice: 12 } }],
+    ["updateQuote", { id: "COT-000001", version: 3, changes: { necessityId: "NEC-000428", unitPrice: 12, quantity: 1 } }],
+    ["deleteQuote", { id: "COT-000001", version: 4, reason: "Teste de exclusão" }],
     ["selectQuote", { id: "COT-000001", version: 4, reason: "Melhor proposta" }],
   ])("preserva o contrato autenticado da ação %s", async (action, payload) => {
     const fetchMock = successfulFetch({});

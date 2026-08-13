@@ -52,7 +52,7 @@ export function QuoteFormSheet(props: QuoteFormSheetProps) {
     setSaving(true);
     setError("");
     try {
-      if (quote) await onUpdate({ id: quote.id, version: quote.version, changes: form, reason });
+      if (quote) await onUpdate({ id: quote.id, version: quote.version, changes: { necessityId, ...form }, reason });
       else await onCreate({ necessityId, ...form });
       onOpenChange(false);
     } catch (caught) {
@@ -77,15 +77,15 @@ export function QuoteFormSheet(props: QuoteFormSheetProps) {
       <SheetContent className="overflow-y-auto sm:max-w-3xl">
         <SheetHeader>
           <SheetTitle>{quote ? `Editar ${quote.id}` : "Nova cotação"}</SheetTitle>
-          <SheetDescription>{quote ? "A necessidade, a loja, o item e o ID interno permanecem imutáveis." : "A cotação será registrada como uma proposta individual vinculada à necessidade."}</SheetDescription>
+          <SheetDescription>{quote ? "O ID interno permanece imutável. Loja, item e quantidade acompanham a necessidade escolhida." : "A cotação será registrada como uma proposta individual vinculada à necessidade."}</SheetDescription>
         </SheetHeader>
         <form className="flex flex-1 flex-col" onSubmit={handleSubmit}>
           <div className="grid gap-4 px-4 pb-6 sm:grid-cols-2">
             <Field label="Loja" htmlFor="quote-store">
-              <select id="quote-store" value={storeId} onChange={(event) => { setStoreId(event.target.value); setNecessityId(""); }} disabled={Boolean(quote)} className="h-9 w-full rounded-md border bg-transparent px-3 text-sm">{stores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}</select>
+              <select id="quote-store" value={storeId} onChange={(event) => { setStoreId(event.target.value); setNecessityId(""); }} className="h-9 w-full rounded-md border bg-transparent px-3 text-sm">{stores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}</select>
             </Field>
             <Field label="Necessidade / item" htmlFor="quote-necessity">
-              <select id="quote-necessity" value={necessityId} onChange={(event) => chooseNeed(event.target.value)} disabled={Boolean(quote)} required className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"><option value="">Selecione</option>{eligibleNeeds.map((need) => <option key={need.id} value={need.id}>{need.id} · {itemMap.get(need.itemId)?.name}</option>)}</select>
+              <select id="quote-necessity" value={necessityId} onChange={(event) => chooseNeed(event.target.value)} required className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"><option value="">Selecione</option>{eligibleNeeds.map((need) => <option key={need.id} value={need.id}>{need.id} · {itemMap.get(need.itemId)?.name}</option>)}</select>
             </Field>
             {selectedItem ? <div className="rounded-lg border bg-muted/30 p-3 text-xs sm:col-span-2"><p className="font-medium">{selectedItem.name} · {selectedItem.operationalCode}</p><p className="mt-1 text-muted-foreground">Rotas cadastradas: {suggestedRoutes.length ? suggestedRoutes.map((route) => `${route.order}. ${route.originDestination}`).join(" → ") : "nenhuma"}</p></div> : null}
             <Field label="Fornecedor" htmlFor="quote-supplier"><select id="quote-supplier" value={form.supplierId} onChange={(event) => update("supplierId", event.target.value)} required className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"><option value="">Selecione</option>{activeSuppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select></Field>

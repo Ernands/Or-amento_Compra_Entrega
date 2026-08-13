@@ -1,6 +1,6 @@
 import { AppsScriptClient } from "@/data/api/apps-script-client";
 import type { OperationsRepository } from "@/data/repositories/operations-repository";
-import type { CreateQuoteInput, CreateSupplierInput, DataSourceInfo, Item, Necessity, Quote, QuotesWorkspace, SelectQuoteInput, SessionUser, Store, Supplier, TechnicalStatus, UpdateItemInput, UpdateQuoteInput, UpdateStoreInput } from "@/domain/entities";
+import type { CreateQuoteInput, CreateSupplierInput, DataSourceInfo, DeleteQuoteInput, Item, Necessity, Quote, QuotesWorkspace, SelectQuoteInput, SessionUser, Store, Supplier, TechnicalStatus, UpdateItemInput, UpdateQuoteInput, UpdateStoreInput } from "@/domain/entities";
 
 export interface BootstrapPayload {
   source: DataSourceInfo;
@@ -8,6 +8,7 @@ export interface BootstrapPayload {
   stores: Store[];
   items: Item[];
   necessities: Necessity[];
+  activeQuoteNecessityIds?: string[];
 }
 
 export class AppsScriptOperationsRepository implements OperationsRepository {
@@ -54,6 +55,10 @@ export class AppsScriptOperationsRepository implements OperationsRepository {
 
   updateQuote(input: UpdateQuoteInput) {
     return this.client.call<{ quote: Quote }>("updateQuote", input);
+  }
+
+  deleteQuote(input: DeleteQuoteInput) {
+    return this.client.call<{ id: string }>("deleteQuote", input);
   }
 
   selectQuote(input: SelectQuoteInput) {

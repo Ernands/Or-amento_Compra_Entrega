@@ -22,21 +22,27 @@ assert.match(deployCode, /function doGet\(event\)/, "doGet(event) ausente.");
 assert.match(deployCode, /function doPost\(event\)/, "doPost(event) ausente.");
 assert.match(deployCode, /function updateStore\(/, "updateStore ausente.");
 assert.match(deployCode, /function updateItem\(/, "updateItem ausente.");
-for (const action of ["quotesWorkspace", "createSupplier", "createQuote", "updateQuote", "selectQuote"]) {
+for (const action of ["quotesWorkspace", "createSupplier", "createQuote", "updateQuote", "deleteQuote", "selectQuote"]) {
   assert.match(deployCode, new RegExp(`case "${action}":`), `A ação ${action} não está no dispatch autenticado.`);
 }
-for (const operation of ["createSupplier", "createQuote", "updateQuote", "selectQuote"]) {
+for (const operation of ["createSupplier", "createQuote", "updateQuote", "deleteQuote", "selectQuote"]) {
   assert.match(deployCode, new RegExp(`function ${operation}\\(`), `${operation} ausente.`);
 }
 assert.match(deployCode, /function createQuote[\s\S]*?return withScriptLock\(/, "createQuote deve usar LockService.");
 assert.match(deployCode, /function updateQuote[\s\S]*?findVersionedRow\(/, "updateQuote deve validar version.");
+assert.match(deployCode, /function deleteQuote[\s\S]*?return withScriptLock\(/, "deleteQuote deve usar LockService.");
+assert.match(deployCode, /function deleteQuote[\s\S]*?findVersionedRow\(/, "deleteQuote deve validar version.");
+assert.match(deployCode, /function deleteQuote[\s\S]*?applyChange\(table, found\.current, "ativo", false/, "deleteQuote deve realizar exclusão lógica.");
 assert.match(deployCode, /function selectQuote[\s\S]*?findVersionedRow\(/, "selectQuote deve validar version.");
 assert.match(deployCode, /APP_CONFIG\.sheets\.lists/, "Cotações deve validar opções pela aba 14_LISTAS.");
 assert.match(deployCode, /function createQuote[\s\S]*?derivePlannedQuoteQuantity/, "createQuote deve derivar a quantidade planejada.");
 assert.match(deployCode, /function updateQuote[\s\S]*?derivePlannedQuoteQuantity/, "updateQuote deve preservar a quantidade planejada.");
+assert.match(deployCode, /function updateQuote[\s\S]*?"ID_Necessidade"[\s\S]*?"ID_Loja"[\s\S]*?"ID_Item"/, "updateQuote deve derivar loja e item da necessidade escolhida.");
 assert.match(deployCode, /function selectQuote[\s\S]*?isQuoteMarkedSelected/, "selectQuote deve remover qualquer seleção anterior inconsistente.");
 assert.match(deployCode, /function createSupplier[\s\S]*?hasDuplicateNormalizedTaxId/, "createSupplier deve bloquear CNPJ/CPF normalizado duplicado.");
 assert.match(deployCode, /function createQuote[\s\S]*?assertNecessityCanBeQuoted/, "createQuote deve validar o status da necessidade.");
+assert.match(deployCode, /function buildBootstrap[\s\S]*?activeQuoteNecessityIds/, "bootstrap deve informar necessidades com cotação ativa.");
+assert.match(deployCode, /function buildQuotesWorkspace[\s\S]*?isActiveQuoteRow/, "quotesWorkspace deve ocultar cotações excluídas.");
 assert.match(deployCode, /findFirstWritableRow\(table, "ID_Cotação"\)/, "createQuote deve usar a primeira linha com ID vazio.");
 assert.match(deployCode, /function readTable[\s\S]*?rowNumbers/, "readTable deve preservar os números físicos das linhas.");
 assert.doesNotMatch(deployCode, /getLastRow\(\) \+ 1/, "Gravações não podem depender de getLastRow() + 1.");
@@ -193,6 +199,15 @@ assert.deepEqual(previousQuote, ["Recebida", "Não"]);
 assert.equal(sandbox.isQuoteSelectionConsistent(selectionTable, targetQuote), true);
 assert.equal(sandbox.isQuoteSelectionConsistent(selectionTable, previousQuote), false);
 
+const activeQuoteTable = {
+  normalizedHeaders: ["idcotacao", "idnecessidade", "ativo"],
+  rows: [["COT-000001", "NEC-000001", "Sim"], ["COT-000002", "NEC-000001", "Não"]],
+};
+assert.equal(sandbox.isActiveQuoteRow(activeQuoteTable, ["COT-000001", "NEC-000001", "Sim"]), true);
+assert.equal(sandbox.isActiveQuoteRow(activeQuoteTable, ["COT-000002", "NEC-000001", "Não"]), false);
+assert.equal(sandbox.hasOtherActiveQuoteForNecessity(activeQuoteTable, "NEC-000001", "COT-000002"), true);
+assert.equal(sandbox.hasOtherActiveQuoteForNecessity(activeQuoteTable, "NEC-000001", "COT-000001"), false);
+
 let insertedRows = 0;
 const formulaPaddedSheet = {
   getMaxRows: () => 1004,
@@ -251,6 +266,7 @@ console.log("✓ doGet health e doPost health responderam corretamente");
 console.log("✓ updateStore e updateItem compilados com permissão centralizada");
 console.log("✓ technicalStatus autenticado verifica 12 abas lendo no máximo 10 linhas por aba");
 console.log("✓ contrato de Cotações compilado com lock, version e dispatch autenticado");
+console.log("✓ exclusão de cotação é lógica, versionada e removida das consultas ativas");
 console.log("✓ totais são calculados no backend e opções são validadas por 14_LISTAS");
 console.log("✓ quantidade deriva de Qtd_Planejada e divergências são rejeitadas");
 console.log("✓ PENDENTE_DEFINICAO é bloqueada e CNPJ/CPF normalizado não duplica");

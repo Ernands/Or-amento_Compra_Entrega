@@ -11,7 +11,7 @@ O primeiro fluxo executável está pronto:
 - necessidades com paginação em 100, 250 ou 500 registros e opção para exibir as 2.295 relações de uma vez;
 - planilha DEV nativa validada e snapshot verificado para desenvolvimento seguro;
 - login Google Identity Services para produção;
-- módulo Cotações ao vivo: cadastro mínimo de fornecedores, propostas por necessidade, cálculo de custos, filtros, edição, comparação e seleção para a futura aprovação;
+- módulo Cotações ao vivo: cadastro mínimo de fornecedores, propostas por necessidade, cálculo de custos, filtros, edição de vínculo, exclusão lógica, comparação e seleção para a futura aprovação;
 - Google Apps Script Web App com `bootstrap` em lote, diagnóstico técnico autenticado e escrita versionada de lojas, itens, necessidades, fornecedores e cotações;
 - permissões por perfil e escopo de loja no backend;
 - auditoria, máquina de estados e `LockService`;

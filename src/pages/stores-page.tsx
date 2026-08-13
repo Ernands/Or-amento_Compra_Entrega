@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, Pencil, Search } from "lucide-react";
+import { ArrowRight, Building2, CircleCheck, CircleOff, Pencil, Search, UserRoundPlus } from "lucide-react";
 
 import { useAuth } from "@/auth/auth-context";
 import { PageHeader } from "@/components/app/page-header";
+import { MetricCard } from "@/components/app/metric-card";
 import { ErrorPanel, LoadingPanel } from "@/components/app/page-state";
 import { StatusBadge } from "@/components/app/status-badge";
 import { StoreEditSheet } from "@/components/app/store-edit-sheet";
@@ -24,6 +25,12 @@ export function StoresPage() {
     return stores.filter((store) => !normalizedQuery || normalize([store.id, store.name, store.city, store.state, store.status].join(" ")).includes(normalizedQuery));
   }, [query, stores]);
   const canEdit = Boolean(user && user.profile !== "CONSULTA");
+  const storeCounts = useMemo(() => ({
+    total: stores.length,
+    active: stores.filter((store) => normalize(store.status) === "ativa").length,
+    toRegister: stores.filter((store) => normalize(store.status).replace(/\s/g, "") === "acadastrar").length,
+    inactive: stores.filter((store) => normalize(store.status) === "inativa").length,
+  }), [stores]);
 
   if (loading && !stores.length) return <LoadingPanel />;
   if (error) return <ErrorPanel message={error} retry={refresh} />;
@@ -31,6 +38,12 @@ export function StoresPage() {
   return (
     <div className="space-y-6">
       <PageHeader eyebrow="Cadastros" title="Lojas" description="As 27 unidades previstas e seus dados de implantação. Use Editar para atualizar a planilha DEV." />
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Resumo das lojas">
+        <MetricCard label="Lojas" value={storeCounts.total} helper="unidades no escopo atual" icon={Building2} />
+        <MetricCard label="Ativas" value={storeCounts.active} helper="unidades ativas" icon={CircleCheck} />
+        <MetricCard label="A cadastrar" value={storeCounts.toRegister} helper="cadastro ainda pendente" icon={UserRoundPlus} tone="yellow" />
+        <MetricCard label="Inativas" value={storeCounts.inactive} helper="unidades inativas" icon={CircleOff} tone="red" />
+      </section>
       <Card className="shadow-none"><CardContent className="p-4"><div className="relative"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por loja, cidade, UF ou status" className="pl-9" /></div></CardContent></Card>
       <Card className="overflow-hidden py-0 shadow-none">
         <CardContent className="overflow-x-auto p-0">

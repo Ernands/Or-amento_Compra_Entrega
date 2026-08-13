@@ -3,6 +3,7 @@ import { Outlet } from "react-router-dom";
 
 import { useAuth } from "@/auth/auth-context";
 import { DesktopNavigation, MobileNavigation } from "@/components/layout/navigation";
+import { RefreshButton } from "@/components/app/refresh-button";
 import { Button } from "@/components/ui/button";
 
 export function AppShell() {
@@ -37,6 +38,7 @@ export function AppShell() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <RefreshButton />
             <Button variant="ghost" size="icon" aria-label="Notificações">
               <Bell className="size-4" />
             </Button>

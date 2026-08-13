@@ -1,9 +1,9 @@
 import { useDeferredValue, useMemo, useState } from "react";
-import { Check, GitCompareArrows, PackagePlus, Pencil, Plus, Search, Star, Timer, Truck } from "lucide-react";
+import { Check, GitCompareArrows, LoaderCircle, PackagePlus, Pencil, Plus, Search, Star, Timer, Trash2, Truck } from "lucide-react";
 import { useLocation } from "react-router-dom";
 
 import { PageHeader } from "@/components/app/page-header";
-import { ErrorPanel, LoadingPanel } from "@/components/app/page-state";
+import { ErrorPanel } from "@/components/app/page-state";
 import { QuoteFormSheet } from "@/components/app/quote-form-sheet";
 import { StatusBadge } from "@/components/app/status-badge";
 import { SupplierCreateSheet } from "@/components/app/supplier-create-sheet";
@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useOperations } from "@/context/operations-context";
 import type { Quote } from "@/domain/entities";
 import { areQuoteQuantitiesComparable } from "@/domain/quotes";
@@ -24,7 +25,7 @@ export function QuotesPage() {
   const location = useLocation();
   const linkedNecessityId = (location.state as { necessityId?: string } | null)?.necessityId;
   const { stores, items, necessities } = useOperations();
-  const { state, refresh, createSupplier, createQuote, updateQuote, selectQuote } = useQuotesWorkspace();
+  const { state, refresh, createSupplier, createQuote, updateQuote, deleteQuote, selectQuote } = useQuotesWorkspace();
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const [storeFilter, setStoreFilter] = useState("");
@@ -36,9 +37,10 @@ export function QuotesPage() {
   const [supplierSheet, setSupplierSheet] = useState(false);
   const [actionError, setActionError] = useState("");
   const [selectingId, setSelectingId] = useState("");
+  const [deletingId, setDeletingId] = useState("");
   const storeMap = useMemo(() => new Map(stores.map((store) => [store.id, store])), [stores]);
   const itemMap = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
-  if (state.status === "loading") return <LoadingPanel />;
+  if (state.status === "loading") return <QuotesLoadingPage />;
   if (state.status === "error") return <ErrorPanel message={state.message} retry={refresh} />;
 
   const { quotes, suppliers, routes, options, permissions } = state.data;
@@ -70,6 +72,15 @@ export function QuotesPage() {
     finally { setSelectingId(""); }
   }
 
+  async function removeQuote(quote: Quote) {
+    if (!window.confirm(`Excluir a cotação ${quote.id}? Ela deixará de aparecer no sistema, mas permanecerá auditável na planilha DEV.`)) return;
+    setDeletingId(quote.id);
+    setActionError("");
+    try { await deleteQuote({ id: quote.id, version: quote.version, reason: "Exclusão solicitada na tela de cotações." }); }
+    catch (error) { setActionError(error instanceof Error ? error.message : "Não foi possível excluir a cotação."); }
+    finally { setDeletingId(""); }
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -95,7 +106,7 @@ export function QuotesPage() {
         </CardContent>
       </Card>
       {!quotes.length ? <EmptyQuotes canCreate={permissions.create} canCreateSupplier={permissions.createSupplier} onNewSupplier={() => setSupplierSheet(true)} onNewQuote={() => setQuoteSheet({})} /> : view === "list" ? (
-        <QuoteTable quotes={visible} supplierMap={supplierMap} storeMap={storeMap} itemMap={itemMap} canEdit={permissions.edit} canSelect={permissions.select} selectingId={selectingId} onEdit={(quote) => setQuoteSheet({ quote })} onSelect={chooseQuote} />
+        <QuoteTable quotes={visible} supplierMap={supplierMap} storeMap={storeMap} itemMap={itemMap} canEdit={permissions.edit} canDelete={permissions.delete} canSelect={permissions.select} selectingId={selectingId} deletingId={deletingId} onEdit={(quote) => setQuoteSheet({ quote })} onDelete={removeQuote} onSelect={chooseQuote} />
       ) : <Comparison groups={grouped} supplierMap={supplierMap} storeMap={storeMap} itemMap={itemMap} selectingId={selectingId} canSelect={permissions.select} onSelect={chooseQuote} />}
       {view === "list" && quotes.length ? <div className="flex items-center justify-between text-xs text-muted-foreground"><span>Exibindo {visible.length} de {filtered.length} cotação(ões).</span>{totalPages > 1 ? <div className="flex items-center gap-2"><Button variant="outline" size="sm" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Anterior</Button><span>Página {currentPage} de {totalPages}</span><Button variant="outline" size="sm" disabled={currentPage === totalPages} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}>Próxima</Button></div> : null}</div> : null}
       {quoteSheet && (quoteSheet.quote ? permissions.edit : permissions.create) ? <QuoteFormSheet key={quoteSheet.quote ? `${quoteSheet.quote.id}:${quoteSheet.quote.version}` : `new:${quoteSheet.necessityId || "none"}`} open quote={quoteSheet.quote} initialNecessityId={quoteSheet.necessityId} stores={stores} items={items} necessities={necessities} suppliers={suppliers} routes={routes} options={options} onOpenChange={(open) => { if (!open) setQuoteSheet(null); }} onCreate={createQuote} onUpdate={updateQuote} /> : null}
@@ -104,8 +115,12 @@ export function QuotesPage() {
   );
 }
 
-function QuoteTable(props: { quotes: Quote[]; supplierMap: Map<string, { name: string }>; storeMap: Map<string, { name: string }>; itemMap: Map<string, { name: string; operationalCode: string }>; canEdit: boolean; canSelect: boolean; selectingId: string; onEdit: (quote: Quote) => void; onSelect: (quote: Quote) => void }) {
-  return <Card className="overflow-hidden py-0 shadow-none"><CardContent className="overflow-x-auto p-0"><Table><TableHeader><TableRow><TableHead className="pl-6">Cotação</TableHead><TableHead>Loja / item</TableHead><TableHead>Fornecedor</TableHead><TableHead className="text-right">Unitário</TableHead><TableHead className="text-right">Total</TableHead><TableHead>Prazo</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Ações</TableHead></TableRow></TableHeader><TableBody>{props.quotes.map((quote) => <TableRow key={quote.id}><TableCell className="pl-6"><p className="font-mono text-xs">{quote.id}</p><p className="text-xs text-muted-foreground">{quote.necessityId}</p></TableCell><TableCell><p className="font-medium">{props.storeMap.get(quote.storeId)?.name}</p><p className="text-xs text-muted-foreground">{props.itemMap.get(quote.itemId)?.operationalCode} · {props.itemMap.get(quote.itemId)?.name}</p></TableCell><TableCell>{props.supplierMap.get(quote.supplierId)?.name || quote.supplierId}</TableCell><TableCell className="text-right tabular-nums">{currencyFormatter.format(quote.unitPrice)}</TableCell><TableCell className="text-right font-medium tabular-nums">{currencyFormatter.format(quote.total)}</TableCell><TableCell>{quote.leadTimeDays} dia(s)</TableCell><TableCell><div className="flex items-center gap-2"><StatusBadge status={quote.status} />{quote.selected ? <Check className="size-4 text-emerald-600" aria-label="Selecionada" /> : null}</div></TableCell><TableCell><div className="flex justify-end gap-1">{quote.link ? <Button asChild variant="ghost" size="sm"><a href={quote.link} target="_blank" rel="noreferrer">Proposta</a></Button> : null}{props.canEdit && !quote.selected ? <Button variant="ghost" size="sm" onClick={() => props.onEdit(quote)}><Pencil />Editar</Button> : null}{props.canSelect && quote.status === "RECEBIDA" && !quote.selected ? <Button variant="outline" size="sm" disabled={props.selectingId === quote.id} onClick={() => props.onSelect(quote)}>Selecionar</Button> : null}</div></TableCell></TableRow>)}</TableBody></Table></CardContent></Card>;
+function QuoteTable(props: { quotes: Quote[]; supplierMap: Map<string, { name: string }>; storeMap: Map<string, { name: string }>; itemMap: Map<string, { name: string; operationalCode: string }>; canEdit: boolean; canDelete: boolean; canSelect: boolean; selectingId: string; deletingId: string; onEdit: (quote: Quote) => void; onDelete: (quote: Quote) => void; onSelect: (quote: Quote) => void }) {
+  return <Card className="overflow-hidden py-0 shadow-none"><CardContent className="overflow-x-auto p-0"><Table><TableHeader><TableRow><TableHead className="pl-6">Cotação</TableHead><TableHead>Loja / item</TableHead><TableHead>Fornecedor</TableHead><TableHead className="text-right">Unitário</TableHead><TableHead className="text-right">Total</TableHead><TableHead>Prazo</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Ações</TableHead></TableRow></TableHeader><TableBody>{props.quotes.map((quote) => <TableRow key={quote.id}><TableCell className="pl-6"><p className="font-mono text-xs">{quote.id}</p><p className="text-xs text-muted-foreground">{quote.necessityId}</p></TableCell><TableCell><p className="font-medium">{props.storeMap.get(quote.storeId)?.name}</p><p className="text-xs text-muted-foreground">{props.itemMap.get(quote.itemId)?.operationalCode} · {props.itemMap.get(quote.itemId)?.name}</p></TableCell><TableCell>{props.supplierMap.get(quote.supplierId)?.name || quote.supplierId}</TableCell><TableCell className="text-right tabular-nums">{currencyFormatter.format(quote.unitPrice)}</TableCell><TableCell className="text-right font-medium tabular-nums">{currencyFormatter.format(quote.total)}</TableCell><TableCell>{quote.leadTimeDays} dia(s)</TableCell><TableCell><div className="flex items-center gap-2"><StatusBadge status={quote.status} />{quote.selected ? <Check className="size-4 text-emerald-600" aria-label="Selecionada" /> : null}</div></TableCell><TableCell><div className="flex justify-end gap-1">{quote.link ? <Button asChild variant="ghost" size="sm"><a href={quote.link} target="_blank" rel="noreferrer">Proposta</a></Button> : null}{props.canEdit && !quote.selected ? <Button variant="ghost" size="sm" onClick={() => props.onEdit(quote)}><Pencil />Editar</Button> : null}{props.canDelete && !quote.selected ? <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" disabled={props.deletingId === quote.id} onClick={() => props.onDelete(quote)}><Trash2 />{props.deletingId === quote.id ? "Excluindo…" : "Excluir"}</Button> : null}{props.canSelect && quote.status === "RECEBIDA" && !quote.selected ? <Button variant="outline" size="sm" disabled={props.selectingId === quote.id} onClick={() => props.onSelect(quote)}>Selecionar</Button> : null}</div></TableCell></TableRow>)}</TableBody></Table></CardContent></Card>;
+}
+
+function QuotesLoadingPage() {
+  return <div className="space-y-6" aria-live="polite" aria-busy="true"><PageHeader eyebrow="Compras" title="Cotações" description="Carregando propostas e permissões da planilha DEV…" /><Card className="shadow-none"><CardContent className="flex items-center gap-3 p-6"><LoaderCircle className="size-5 animate-spin text-primary" /><div><p className="font-medium">Carregando cotações</p><p className="text-sm text-muted-foreground">Consultando propostas, fornecedores, rotas e permissões.</p></div></CardContent></Card><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-32 rounded-xl" />)}</div><Skeleton className="h-64 rounded-xl" /></div>;
 }
 
 function Comparison(props: { groups: Array<[string, Quote[]]>; supplierMap: Map<string, { name: string; rating?: number | null }>; storeMap: Map<string, { name: string }>; itemMap: Map<string, { name: string; operationalCode: string }>; canSelect: boolean; selectingId: string; onSelect: (quote: Quote) => void }) {

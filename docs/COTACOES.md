@@ -12,7 +12,7 @@ O módulo usa a estrutura já existente, sem adicionar ou renomear colunas:
 - `09_USUARIOS`, `10_PERMISSOES` e `Lojas_Permitidas`: identidade, operações autorizadas e escopo de registros;
 - `12_HISTORICO`: auditoria das criações, edições, seleções e mudança de status da necessidade.
 
-`setupTechnicalColumns()` não faz parte do fluxo e não deve ser executada nesta entrega.
+`setupTechnicalColumns()` não faz parte do fluxo e não deve ser executada nesta entrega. Nenhuma coluna foi adicionada ou renomeada.
 
 ## Contrato autenticado
 
@@ -28,7 +28,7 @@ Todo POST usa o envelope:
 
 ### `quotesWorkspace`
 
-Payload vazio. Retorna `suppliers`, `quotes`, `routes`, `options`, `permissions` e `checkedAt`. Cotações e rotas respeitam `Lojas_Permitidas`; as opções vêm de `14_LISTAS`.
+Payload vazio. Retorna `suppliers`, somente `quotes` ativas, `routes`, `options`, `permissions` e `checkedAt`. Cotações e rotas respeitam `Lojas_Permitidas`; as opções vêm de `14_LISTAS`.
 
 ### `createSupplier`
 
@@ -75,7 +75,11 @@ O servidor calcula `Valor_Total = Qtd_Planejada × Preço_Unitário + Frete + Ou
 
 ### `updateQuote`
 
-Recebe `id`, `version`, `changes` com todos os campos editáveis de `createQuote` exceto `necessityId`, e `reason` opcional. O backend rejeita conflito de versão e proposta já selecionada.
+Recebe `id`, `version`, `changes` com `necessityId` e os valores editáveis de `createQuote`, além de `reason` opcional. O ID da cotação permanece imutável. Quando a necessidade muda, loja, item e quantidade são derivados novamente da necessidade escolhida; o backend atualiza os estados das necessidades antiga e nova dentro do mesmo `ScriptLock`. A necessidade anterior volta a `NAO_INICIADO` somente quando deixa de possuir qualquer cotação ativa. O backend rejeita conflito de versão, necessidade inelegível e proposta já selecionada.
+
+### `deleteQuote`
+
+Recebe `id`, `version` e `reason` opcional. A exclusão é lógica: grava `ativo=Não`, `Status=Descartada`, atualiza versionamento e auditoria, e a proposta deixa de ser retornada por `quotesWorkspace`. Propostas selecionadas ficam protegidas. Se a proposta excluída era a última ativa da necessidade em `EM_COTACAO`, a necessidade volta atomicamente para `NAO_INICIADO`.
 
 ### `selectQuote`
 

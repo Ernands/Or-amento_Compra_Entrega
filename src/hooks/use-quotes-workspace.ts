@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useAuth } from "@/auth/auth-context";
 import { createOperationsRepository } from "@/data/repositories/create-operations-repository";
-import type { CreateQuoteInput, CreateSupplierInput, QuotesWorkspace, SelectQuoteInput, UpdateQuoteInput } from "@/domain/entities";
+import type { CreateQuoteInput, CreateSupplierInput, DeleteQuoteInput, QuotesWorkspace, SelectQuoteInput, UpdateQuoteInput } from "@/domain/entities";
 
 type WorkspaceState =
   | { status: "loading" }
@@ -10,7 +10,7 @@ type WorkspaceState =
   | { status: "error"; message: string };
 
 export function useQuotesWorkspace() {
-  const { credential, refreshBootstrap } = useAuth();
+  const { bootstrap, credential, refreshBootstrap } = useAuth();
   const repository = useMemo(() => credential ? createOperationsRepository(credential) : null, [credential]);
   const [reloadKey, setReloadKey] = useState(0);
   const [state, setState] = useState<WorkspaceState>({ status: "loading" });
@@ -22,7 +22,7 @@ export function useQuotesWorkspace() {
       .then((data) => { if (active) setState({ status: "success", data }); })
       .catch((error: unknown) => { if (active) setState({ status: "error", message: error instanceof Error ? error.message : "Não foi possível carregar as cotações." }); });
     return () => { active = false; };
-  }, [reloadKey, repository]);
+  }, [bootstrap?.source.checkedAt, reloadKey, repository]);
 
   const refresh = useCallback(() => {
     setState({ status: "loading" });
@@ -30,6 +30,7 @@ export function useQuotesWorkspace() {
   }, []);
 
   const afterWrite = useCallback(async () => {
+    setState({ status: "loading" });
     await refreshBootstrap();
     setReloadKey((value) => value + 1);
   }, [refreshBootstrap]);
@@ -53,11 +54,17 @@ export function useQuotesWorkspace() {
     await afterWrite();
   }, [afterWrite, repository]);
 
+  const deleteQuote = useCallback(async (input: DeleteQuoteInput) => {
+    if (!repository) throw new Error("Sessão não encontrada.");
+    await repository.deleteQuote(input);
+    await afterWrite();
+  }, [afterWrite, repository]);
+
   const selectQuote = useCallback(async (input: SelectQuoteInput) => {
     if (!repository) throw new Error("Sessão não encontrada.");
     await repository.selectQuote(input);
     await afterWrite();
   }, [afterWrite, repository]);
 
-  return { state, refresh, createSupplier, createQuote, updateQuote, selectQuote };
+  return { state, refresh, createSupplier, createQuote, updateQuote, deleteQuote, selectQuote };
 }

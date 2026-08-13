@@ -86,7 +86,7 @@ O teste autenticado de `bootstrap` também aceita `GOOGLE_ID_TOKEN` temporário.
 
 - `GET ?action=health`: health check público.
 - `POST {"action":"health"}`: health check público.
-- `POST {"action":"bootstrap","credential":"<Google ID token>","payload":{}}`: sessão, lojas, itens e necessidades filtradas pelo escopo do usuário.
+- `POST {"action":"bootstrap","credential":"<Google ID token>","payload":{}}`: sessão, lojas, itens, necessidades e IDs das necessidades com cotação ativa, filtrados pelo escopo do usuário.
 - `POST {"action":"technicalStatus","credential":"<Google ID token>","payload":{}}`: diagnóstico somente leitura das 12 abas; lê no máximo as 10 primeiras linhas de cada aba para localizar cabeçalhos e verificar colunas técnicas.
 - `POST {"action":"updateNecessity","credential":"<Google ID token>","payload":{...}}`: escrita versionada com permissão, validação de status, `LockService` e auditoria em `12_HISTORICO`.
 - `POST {"action":"updateStore","credential":"<Google ID token>","payload":{...}}`: edição versionada de lojas com escopo, permissão do módulo e auditoria.
@@ -94,7 +94,8 @@ O teste autenticado de `bootstrap` também aceita `GOOGLE_ID_TOKEN` temporário.
 - `POST {"action":"quotesWorkspace","credential":"<Google ID token>","payload":{}}`: fornecedores, cotações e rotas filtrados pelo escopo, opções reais de `14_LISTAS` e permissões do usuário.
 - `POST {"action":"createSupplier","credential":"<Google ID token>","payload":{...}}`: cadastro de fornecedor nos campos existentes de `04_FORNECEDORES`.
 - `POST {"action":"createQuote","credential":"<Google ID token>","payload":{...}}`: cria uma proposta em `05_COTACOES`, deriva loja/item da necessidade e calcula o total no backend.
-- `POST {"action":"updateQuote","credential":"<Google ID token>","payload":{"id":"COT-000001","version":1,"changes":{...},"reason":"..."}}`: edição integral versionada; IDs e vínculo da necessidade permanecem imutáveis.
+- `POST {"action":"updateQuote","credential":"<Google ID token>","payload":{"id":"COT-000001","version":1,"changes":{"necessityId":"NEC-000001",...},"reason":"..."}}`: edição versionada; preserva o ID da cotação e deriva loja, item e quantidade da necessidade escolhida.
+- `POST {"action":"deleteQuote","credential":"<Google ID token>","payload":{"id":"COT-000001","version":2,"reason":"..."}}`: exclusão lógica versionada, auditada e protegida por `LockService`.
 - `POST {"action":"selectQuote","credential":"<Google ID token>","payload":{"id":"COT-000001","version":2,"reason":"..."}}`: seleciona manualmente uma proposta recebida e desmarca a anterior da mesma necessidade.
 
 Todo acesso à planilha usa `SPREADSHEET_ID` via `PropertiesService`. O ID não é hardcoded em `Code.gs`.
