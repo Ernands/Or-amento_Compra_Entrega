@@ -37,6 +37,7 @@ interface SheetTable {
   headers: string[];
   normalizedHeaders: string[];
   rows: unknown[][];
+  rowNumbers: number[];
 }
 
 interface TechnicalTableStatus {
@@ -250,6 +251,7 @@ function createSupplier(
     const registeredTaxIds = table.rows.map((row) => cell(table, row, "CNPJ_CPF"));
     if (taxId && hasDuplicateNormalizedTaxId(registeredTaxIds, taxId)) throw new ApiException("DUPLICATE_RECORD", "Já existe um fornecedor com este CNPJ/CPF.");
     const id = nextInternalId(table, "ID_Fornecedor", "FOR", 6);
+    assertInternalIdAvailable(table, "ID_Fornecedor", id);
     const now = new Date();
     const row = Array(table.headers.length).fill("");
     setCell(table, row, "ID_Fornecedor", id);
@@ -265,7 +267,7 @@ function createSupplier(
     setCell(table, row, "Observações", validateText(payload.notes));
     setCell(table, row, "Link_Site", validateOptionalUrl(payload.website));
     setTechnicalCreationFields(table, row, user, now);
-    appendCreatedRow(spreadsheet, table, row, user, {
+    appendCreatedRow(spreadsheet, table, "ID_Fornecedor", row, user, {
       module: "FORNECEDORES",
       recordId: id,
       changes: [{ field: "Fornecedor", previous: "", next: name }],
@@ -301,6 +303,7 @@ function createQuote(
     const table = readTable(spreadsheet, APP_CONFIG.sheets.quotes, ["ID_Cotação", "ID_Necessidade", "ID_Loja", "ID_Item", "ID_Fornecedor", "Valor_Total", "Status", "Selecionada", "created_at", "created_by", "updated_at", "updated_by", "version", "ativo"]);
     const values = validateQuoteValues(payload, readQuoteOptions(spreadsheet), plannedQuantity);
     const id = nextInternalId(table, "ID_Cotação", "COT", 6);
+    assertInternalIdAvailable(table, "ID_Cotação", id);
     const now = new Date();
     const row = Array(table.headers.length).fill("");
     setCell(table, row, "ID_Cotação", id);
@@ -315,8 +318,9 @@ function createQuote(
     setCell(table, row, "ativo", "Sim");
     setTechnicalCreationFields(table, row, user, now);
 
-    const quoteRange = table.sheet.getRange(table.sheet.getLastRow() + 1, 1, 1, table.headers.length);
-    const necessityRange = necessitiesTable.sheet.getRange(necessitiesTable.headerRow + necessityMatch.rowIndex + 1, 1, 1, necessitiesTable.headers.length);
+    const quoteRange = table.sheet.getRange(findFirstWritableRow(table, "ID_Cotação"), 1, 1, table.headers.length);
+    const necessityRange = necessitiesTable.sheet.getRange(physicalRowNumber(necessitiesTable, necessityMatch.rowIndex), 1, 1, necessitiesTable.headers.length);
+    const previousQuote = restorableRowValues(quoteRange);
     const previousNecessity = necessityRange.getValues()[0];
     const auditEntries: AuditEntry[] = [{
       module: "COTACOES",
@@ -344,7 +348,7 @@ function createQuote(
       appendAuditBatch(spreadsheet, user, auditEntries);
       SpreadsheetApp.flush();
     } catch (error) {
-      quoteRange.clearContent();
+      quoteRange.setValues([previousQuote]);
       necessityRange.setValues([previousNecessity]);
       SpreadsheetApp.flush();
       throw error;
@@ -426,7 +430,7 @@ function selectQuote(
       setCell(table, entry.row, "version", Number(cell(table, entry.row, "version") || 1) + 1);
       setCell(table, entry.row, "updated_at", now);
       setCell(table, entry.row, "updated_by", user.id);
-      const range = table.sheet.getRange(table.headerRow + entry.rowIndex + 1, 1, 1, table.headers.length);
+      const range = table.sheet.getRange(physicalRowNumber(table, entry.rowIndex), 1, 1, table.headers.length);
       writes.push({ range, previous: range.getValues()[0], next: entry.row });
       audits.push({ module: "COTACOES", recordId: quoteId, changes, reason: String(payload.reason || "Proposta escolhida para futura aprovação."), action: "SELECAO" });
     });
@@ -489,7 +493,7 @@ function updateNecessity(
     current[versionColumn] = currentVersion + 1;
     current[columnIndex(table, "updated_at")] = new Date();
     current[columnIndex(table, "updated_by")] = user.id;
-    const absoluteRow = table.headerRow + rowIndex + 1;
+    const absoluteRow = physicalRowNumber(table, rowIndex);
     const range = table.sheet.getRange(absoluteRow, 1, 1, table.headers.length);
     const previousRow = range.getValues()[0];
     try {
@@ -676,7 +680,7 @@ function appendAuditBatch(
     setCell(table, row, "Observações", entry.reason);
     return row;
   }));
-  table.sheet.getRange(table.sheet.getLastRow() + 1, 1, output.length, table.headers.length).setValues(output);
+  table.sheet.getRange(findFirstWritableRow(table, "ID_Histórico", output.length), 1, output.length, table.headers.length).setValues(output);
 }
 
 function withScriptLock<T>(callback: () => T): T {
@@ -699,9 +703,7 @@ function findVersionedRow(
   expectedVersion: number,
   entityLabel: string,
 ): { current: unknown[]; rowIndex: number; currentVersion: number } {
-  const idColumn = columnIndex(table, idHeader);
-  const rowIndex = table.rows.findIndex((row) => String(row[idColumn] || "").trim() === id);
-  if (rowIndex < 0) throw new ApiException("NOT_FOUND", `${entityLabel} não encontrado(a).`);
+  const rowIndex = findUniqueRowIndex(table, idHeader, id, entityLabel);
   const current = table.rows[rowIndex].slice();
   const currentVersion = Number(current[columnIndex(table, "version")] || 1);
   if (currentVersion !== expectedVersion) {
@@ -726,7 +728,7 @@ function persistUpdatedRow(
   current[columnIndex(table, "version")] = currentVersion + 1;
   current[columnIndex(table, "updated_at")] = new Date();
   current[columnIndex(table, "updated_by")] = user.id;
-  const range = table.sheet.getRange(table.headerRow + rowIndex + 1, 1, 1, table.headers.length);
+  const range = table.sheet.getRange(physicalRowNumber(table, rowIndex), 1, 1, table.headers.length);
   const previousRow = range.getValues()[0];
   try {
     range.setValues([current]);
@@ -742,20 +744,28 @@ function persistUpdatedRow(
 function appendCreatedRow(
   spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet,
   table: SheetTable,
+  idHeader: string,
   row: unknown[],
   user: SystemUser,
   audit: AuditEntry,
 ): void {
-  const range = table.sheet.getRange(table.sheet.getLastRow() + 1, 1, 1, table.headers.length);
+  const range = table.sheet.getRange(findFirstWritableRow(table, idHeader), 1, 1, table.headers.length);
+  const previousRow = restorableRowValues(range);
   try {
     range.setValues([row]);
     appendAuditBatch(spreadsheet, user, [audit]);
     SpreadsheetApp.flush();
   } catch (error) {
-    range.clearContent();
+    range.setValues([previousRow]);
     SpreadsheetApp.flush();
     throw error;
   }
+}
+
+function restorableRowValues(range: GoogleAppsScript.Spreadsheet.Range): unknown[] {
+  const values = range.getValues()[0];
+  const formulas = range.getFormulas()[0];
+  return values.map((value, index) => formulas[index] || value);
 }
 
 function setTechnicalCreationFields(table: SheetTable, row: unknown[], user: SystemUser, now: Date): void {
@@ -776,10 +786,48 @@ function nextInternalId(table: SheetTable, idHeader: string, prefix: string, wid
   return `${prefix}-${String(next).padStart(width, "0")}`;
 }
 
-function findRowById(table: SheetTable, idHeader: string, id: string, entityLabel: string): { row: unknown[]; rowIndex: number } {
+function assertInternalIdAvailable(table: SheetTable, idHeader: string, id: string): void {
   const idColumn = columnIndex(table, idHeader);
-  const rowIndex = table.rows.findIndex((row) => String(row[idColumn] || "").trim() === id);
-  if (rowIndex < 0) throw new ApiException("NOT_FOUND", `${entityLabel} não encontrado(a).`);
+  if (table.rows.some((row) => String(row[idColumn] || "").trim() === id)) {
+    throw new ApiException("DUPLICATE_RECORD", `O ID interno ${id} já existe. Atualize os dados antes de tentar novamente.`);
+  }
+}
+
+function findFirstWritableRow(table: SheetTable, idHeader: string, requiredRows = 1): number {
+  if (!Number.isInteger(requiredRows) || requiredRows < 1) throw new ApiException("VALIDATION_ERROR", "Quantidade de linhas para gravação inválida.");
+  const firstDataRow = table.headerRow + 1;
+  const maxRows = table.sheet.getMaxRows();
+  const availableRows = Math.max(maxRows - firstDataRow + 1, 0);
+  const idColumn = columnIndex(table, idHeader) + 1;
+  const values = availableRows ? table.sheet.getRange(firstDataRow, idColumn, availableRows, 1).getDisplayValues() : [];
+  let emptyRun = 0;
+  for (let index = 0; index < values.length; index += 1) {
+    emptyRun = String(values[index][0] || "").trim() === "" ? emptyRun + 1 : 0;
+    if (emptyRun === requiredRows) return firstDataRow + index - requiredRows + 1;
+  }
+  table.sheet.insertRowsAfter(maxRows, requiredRows);
+  return maxRows + 1;
+}
+
+function physicalRowNumber(table: SheetTable, rowIndex: number): number {
+  const rowNumber = table.rowNumbers[rowIndex];
+  if (!Number.isInteger(rowNumber) || rowNumber <= table.headerRow) throw new ApiException("STRUCTURE_ERROR", "Não foi possível localizar a linha física do registro.");
+  return rowNumber;
+}
+
+function findUniqueRowIndex(table: SheetTable, idHeader: string, id: string, entityLabel: string): number {
+  const idColumn = columnIndex(table, idHeader);
+  const matches = table.rows.reduce<number[]>((indexes, row, index) => {
+    if (String(row[idColumn] || "").trim() === id) indexes.push(index);
+    return indexes;
+  }, []);
+  if (!matches.length) throw new ApiException("NOT_FOUND", `${entityLabel} não encontrado(a).`);
+  if (matches.length > 1) throw new ApiException("DUPLICATE_RECORD", `O ID ${id} está duplicado na planilha. Corrija a duplicidade antes de editar.`);
+  return matches[0];
+}
+
+function findRowById(table: SheetTable, idHeader: string, id: string, entityLabel: string): { row: unknown[]; rowIndex: number } {
+  const rowIndex = findUniqueRowIndex(table, idHeader, id, entityLabel);
   return { row: table.rows[rowIndex], rowIndex };
 }
 
@@ -795,8 +843,15 @@ function readTable(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet, sheetN
   const headers = preview[headerOffset].map((header) => String(header || "").trim());
   const dataStartRow = headerOffset + 2;
   const dataRowCount = Math.max(sheet.getLastRow() - headerOffset - 1, 0);
-  const rows = dataRowCount ? sheet.getRange(dataStartRow, 1, dataRowCount, headers.length).getValues().filter((row) => row.some((value) => String(value || "").trim() !== "")) : [];
-  return { sheet, headerRow: headerOffset + 1, headers, normalizedHeaders: headers.map(normalizeHeader), rows };
+  const rawRows = dataRowCount ? sheet.getRange(dataStartRow, 1, dataRowCount, headers.length).getValues() : [];
+  const rows: unknown[][] = [];
+  const rowNumbers: number[] = [];
+  rawRows.forEach((row, index) => {
+    if (!row.some((value) => String(value || "").trim() !== "")) return;
+    rows.push(row);
+    rowNumbers.push(dataStartRow + index);
+  });
+  return { sheet, headerRow: headerOffset + 1, headers, normalizedHeaders: headers.map(normalizeHeader), rows, rowNumbers };
 }
 
 function mapStore(table: SheetTable, row: unknown[]) {

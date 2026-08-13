@@ -84,3 +84,5 @@ Recebe `id`, `version` e `reason` opcional. Somente uma proposta `RECEBIDA`, den
 ## Garantias de gravação
 
 As ações validam permissão e escopo no backend, usam `LockService`, conferem `version`, preservam IDs internos, preenchem os campos técnicos e registram `12_HISTORICO`. Operações multiaba possuem compensação local se a auditoria falhar. Quando informado, `CNPJ_CPF` é normalizado para apenas dígitos durante a verificação de duplicidade, independentemente da máscara armazenada.
+
+Novas linhas são gravadas na primeira posição em que a coluna do ID interno esteja vazia. Fórmulas pré-preenchidas em outras colunas não alteram essa escolha. O leitor preserva o número físico de cada linha, e qualquer ID interno duplicado bloqueia edições ambíguas até a duplicidade ser corrigida.

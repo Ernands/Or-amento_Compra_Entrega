@@ -37,6 +37,9 @@ assert.match(deployCode, /function updateQuote[\s\S]*?derivePlannedQuoteQuantity
 assert.match(deployCode, /function selectQuote[\s\S]*?isQuoteMarkedSelected/, "selectQuote deve remover qualquer seleção anterior inconsistente.");
 assert.match(deployCode, /function createSupplier[\s\S]*?hasDuplicateNormalizedTaxId/, "createSupplier deve bloquear CNPJ/CPF normalizado duplicado.");
 assert.match(deployCode, /function createQuote[\s\S]*?assertNecessityCanBeQuoted/, "createQuote deve validar o status da necessidade.");
+assert.match(deployCode, /findFirstWritableRow\(table, "ID_Cotação"\)/, "createQuote deve usar a primeira linha com ID vazio.");
+assert.match(deployCode, /function readTable[\s\S]*?rowNumbers/, "readTable deve preservar os números físicos das linhas.");
+assert.doesNotMatch(deployCode, /getLastRow\(\) \+ 1/, "Gravações não podem depender de getLastRow() + 1.");
 assert.match(deployCode, /case "technicalStatus":/, "A ação technicalStatus não está no dispatch autenticado.");
 assert.match(deployCode, /function buildTechnicalStatus\(/, "buildTechnicalStatus ausente.");
 assert.match(deployCode, /function inspectTechnicalTable\(/, "Inspeção técnica leve ausente.");
@@ -190,6 +193,55 @@ assert.deepEqual(previousQuote, ["Recebida", "Não"]);
 assert.equal(sandbox.isQuoteSelectionConsistent(selectionTable, targetQuote), true);
 assert.equal(sandbox.isQuoteSelectionConsistent(selectionTable, previousQuote), false);
 
+let insertedRows = 0;
+const formulaPaddedSheet = {
+  getMaxRows: () => 1004,
+  getRange: (row, column, rowCount, columnCount) => {
+    assert.deepEqual([row, column, rowCount, columnCount], [5, 1, 1000, 1]);
+    return {
+      getDisplayValues: () => Array.from({ length: 1000 }, (_, index) => [index === 0 ? "COT-000001" : ""]),
+    };
+  },
+  insertRowsAfter: () => { insertedRows += 1; },
+};
+const formulaPaddedTable = {
+  sheet: formulaPaddedSheet,
+  headerRow: 4,
+  headers: ["ID_Cotação"],
+  normalizedHeaders: ["idcotacao"],
+  rows: [["COT-000001"]],
+  rowNumbers: [5],
+};
+assert.equal(sandbox.findFirstWritableRow(formulaPaddedTable, "ID_Cotação"), 6, "Fórmulas vazias em outras colunas não podem empurrar a gravação para o fim da grade.");
+assert.equal(insertedRows, 0);
+
+const sparseValues = [
+  ["COTAÇÕES", ""],
+  ["Descrição", ""],
+  ["", ""],
+  ["ID_Cotação", "Valor_Total"],
+  ["COT-000001", 600],
+  ["", ""],
+  ["", ""],
+  ["COT-000004", 885],
+];
+const sparseSheet = {
+  getLastColumn: () => 2,
+  getLastRow: () => 8,
+  getRange: (row, column, rowCount, columnCount) => ({
+    getValues: () => sparseValues.slice(row - 1, row - 1 + rowCount).map((values) => values.slice(column - 1, column - 1 + columnCount)),
+  }),
+};
+const sparseTable = sandbox.readTable({ getSheetByName: () => sparseSheet }, "05_COTACOES", ["ID_Cotação", "Valor_Total"]);
+assert.deepEqual(Array.from(sparseTable.rowNumbers), [5, 8], "readTable deve preservar as linhas físicas mesmo ao filtrar vazios.");
+assert.equal(sandbox.physicalRowNumber(sparseTable, 1), 8);
+assert.equal(sandbox.findUniqueRowIndex(sparseTable, "ID_Cotação", "COT-000004", "Cotação"), 1);
+assert.throws(
+  () => sandbox.findUniqueRowIndex({ ...sparseTable, rows: [["COT-000001", 600], ["COT-000001", 700]], rowNumbers: [5, 8] }, "ID_Cotação", "COT-000001", "Cotação"),
+  /duplicado/,
+  "IDs duplicados devem bloquear edições ambíguas.",
+);
+
 console.log("✓ Code.gs corresponde ao JavaScript compilado");
 console.log("✓ Manifesto de implantação sincronizado");
 console.log("✓ urlFetchWhitelist limitada a https://oauth2.googleapis.com/tokeninfo");
@@ -203,3 +255,5 @@ console.log("✓ totais são calculados no backend e opções são validadas por
 console.log("✓ quantidade deriva de Qtd_Planejada e divergências são rejeitadas");
 console.log("✓ PENDENTE_DEFINICAO é bloqueada e CNPJ/CPF normalizado não duplica");
 console.log("✓ Status e Selecionada permanecem consistentes ao trocar a proposta escolhida");
+console.log("✓ primeira linha de ID vazia é usada mesmo com fórmulas até o fim da grade");
+console.log("✓ linhas físicas são preservadas e IDs duplicados bloqueiam edições ambíguas");
