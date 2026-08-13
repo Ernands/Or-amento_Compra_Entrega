@@ -52,7 +52,7 @@ export function QuoteFormSheet(props: QuoteFormSheetProps) {
     setSaving(true);
     setError("");
     try {
-      if (quote) await onUpdate({ id: quote.id, version: quote.version, changes: { necessityId, ...form }, reason });
+      if (quote) await onUpdate({ id: quote.id, version: quote.version, changes: { ...(necessityId === quote.necessityId ? {} : { necessityId }), ...form }, reason });
       else await onCreate({ necessityId, ...form });
       onOpenChange(false);
     } catch (caught) {

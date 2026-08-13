@@ -285,7 +285,7 @@ function updateQuote(spreadsheet, user, payload) {
             throw new ApiException("VALIDATION_ERROR", "O fornecedor selecionado está inativo.");
         const necessitiesTable = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "ID_Loja", "ID_Item", "Qtd_Planejada", "Status", "version", "updated_at", "updated_by"]);
         const previousNecessityId = cell(table, found.current, "ID_Necessidade");
-        const necessityId = requireString(changes.necessityId, "necessityId");
+        const necessityId = changes.necessityId === undefined ? previousNecessityId : requireString(changes.necessityId, "necessityId");
         const necessityMatch = findRowById(necessitiesTable, "ID_Necessidade", necessityId, "Necessidade");
         const necessity = necessityMatch.row.slice();
         const storeId = cell(necessitiesTable, necessity, "ID_Loja");

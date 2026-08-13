@@ -260,7 +260,7 @@ export interface CreateQuoteInput extends QuoteValuesInput {
 export interface UpdateQuoteInput {
   id: string;
   version: number;
-  changes: QuoteValuesInput & { necessityId: string };
+  changes: QuoteValuesInput & { necessityId?: string };
   reason?: string;
 }
 

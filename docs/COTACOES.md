@@ -75,7 +75,7 @@ O servidor calcula `Valor_Total = Qtd_Planejada × Preço_Unitário + Frete + Ou
 
 ### `updateQuote`
 
-Recebe `id`, `version`, `changes` com `necessityId` e os valores editáveis de `createQuote`, além de `reason` opcional. O ID da cotação permanece imutável. Quando a necessidade muda, loja, item e quantidade são derivados novamente da necessidade escolhida; o backend atualiza os estados das necessidades antiga e nova dentro do mesmo `ScriptLock`. A necessidade anterior volta a `NAO_INICIADO` somente quando deixa de possuir qualquer cotação ativa. O backend rejeita conflito de versão, necessidade inelegível e proposta já selecionada.
+Recebe `id`, `version`, `changes` com os valores editáveis de `createQuote`, `necessityId` quando o vínculo for alterado, além de `reason` opcional. O ID da cotação permanece imutável. Quando a necessidade muda, loja, item e quantidade são derivados novamente da necessidade escolhida; o backend atualiza os estados das necessidades antiga e nova dentro do mesmo `ScriptLock`. A necessidade anterior volta a `NAO_INICIADO` somente quando deixa de possuir qualquer cotação ativa. O backend rejeita conflito de versão, necessidade inelegível e proposta já selecionada.
 
 ### `deleteQuote`
 
