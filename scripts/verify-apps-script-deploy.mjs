@@ -22,6 +22,16 @@ assert.match(deployCode, /function doGet\(event\)/, "doGet(event) ausente.");
 assert.match(deployCode, /function doPost\(event\)/, "doPost(event) ausente.");
 assert.match(deployCode, /function updateStore\(/, "updateStore ausente.");
 assert.match(deployCode, /function updateItem\(/, "updateItem ausente.");
+for (const action of ["quotesWorkspace", "createSupplier", "createQuote", "updateQuote", "selectQuote"]) {
+  assert.match(deployCode, new RegExp(`case "${action}":`), `A ação ${action} não está no dispatch autenticado.`);
+}
+for (const operation of ["createSupplier", "createQuote", "updateQuote", "selectQuote"]) {
+  assert.match(deployCode, new RegExp(`function ${operation}\\(`), `${operation} ausente.`);
+}
+assert.match(deployCode, /function createQuote[\s\S]*?return withScriptLock\(/, "createQuote deve usar LockService.");
+assert.match(deployCode, /function updateQuote[\s\S]*?findVersionedRow\(/, "updateQuote deve validar version.");
+assert.match(deployCode, /function selectQuote[\s\S]*?findVersionedRow\(/, "selectQuote deve validar version.");
+assert.match(deployCode, /APP_CONFIG\.sheets\.lists/, "Cotações deve validar opções pela aba 14_LISTAS.");
 assert.match(deployCode, /case "technicalStatus":/, "A ação technicalStatus não está no dispatch autenticado.");
 assert.match(deployCode, /function buildTechnicalStatus\(/, "buildTechnicalStatus ausente.");
 assert.match(deployCode, /function inspectTechnicalTable\(/, "Inspeção técnica leve ausente.");
@@ -108,6 +118,38 @@ assert.equal(technicalStatus.tables.length, 12);
 assert.equal(technicalStatus.tables.every((table) => table.headerRow === 4 && table.missing.length === 0), true);
 assert.equal(maximumRowsRead, 10, "O diagnóstico técnico deve limitar a leitura às primeiras 10 linhas.");
 
+const quoteOptions = {
+  statuses: ["RASCUNHO", "EM_ANDAMENTO", "RECEBIDA"],
+  origins: ["Matriz", "Loja"],
+  paymentMethods: ["À vista", "30 dias"],
+};
+const validatedQuote = sandbox.validateQuoteValues({
+  supplierId: "FOR-000001",
+  origin: "Matriz",
+  unitPrice: 125.5,
+  quantity: 2,
+  freight: 10,
+  otherCosts: 4.25,
+  paymentMethod: "30 dias",
+  leadTimeDays: 7,
+  proposalValidUntil: "2026-08-31",
+  link: "https://example.com/proposta",
+  status: "RECEBIDA",
+  quoteDate: "2026-08-13",
+  notes: "Teste de contrato",
+}, quoteOptions);
+assert.equal(validatedQuote.total, 265.25, "O backend deve calcular quantidade × preço + frete + outros custos.");
+assert.throws(
+  () => sandbox.validateQuoteValues({ ...validatedQuote, origin: "Valor inventado" }, quoteOptions),
+  /14_LISTAS/,
+  "O backend deve rejeitar origem ausente de 14_LISTAS.",
+);
+assert.throws(
+  () => sandbox.validateQuoteValues({ ...validatedQuote, status: "Status inventado" }, quoteOptions),
+  /Status de cotação inválido/,
+  "O backend deve rejeitar status desconhecido em vez de convertê-lo em rascunho.",
+);
+
 console.log("✓ Code.gs corresponde ao JavaScript compilado");
 console.log("✓ Manifesto de implantação sincronizado");
 console.log("✓ urlFetchWhitelist limitada a https://oauth2.googleapis.com/tokeninfo");
@@ -116,3 +158,5 @@ console.log("✓ ID da planilha DEV não está hardcoded em Code.gs");
 console.log("✓ doGet health e doPost health responderam corretamente");
 console.log("✓ updateStore e updateItem compilados com permissão centralizada");
 console.log("✓ technicalStatus autenticado verifica 12 abas lendo no máximo 10 linhas por aba");
+console.log("✓ contrato de Cotações compilado com lock, version e dispatch autenticado");
+console.log("✓ totais são calculados no backend e opções são validadas por 14_LISTAS");

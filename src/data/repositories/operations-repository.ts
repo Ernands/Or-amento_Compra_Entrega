@@ -1,4 +1,4 @@
-import type { DataSourceInfo, Item, Necessity, Store, TechnicalStatus, UpdateItemInput, UpdateStoreInput } from "@/domain/entities";
+import type { CreateQuoteInput, CreateSupplierInput, DataSourceInfo, Item, Necessity, Quote, QuotesWorkspace, SelectQuoteInput, Store, Supplier, TechnicalStatus, UpdateItemInput, UpdateQuoteInput, UpdateStoreInput } from "@/domain/entities";
 
 export interface OperationsRepository {
   getSourceInfo(): Promise<DataSourceInfo>;
@@ -6,6 +6,11 @@ export interface OperationsRepository {
   listItems(): Promise<Item[]>;
   listNecessities(): Promise<Necessity[]>;
   getTechnicalStatus(): Promise<TechnicalStatus>;
+  getQuotesWorkspace(): Promise<QuotesWorkspace>;
+  createSupplier(input: CreateSupplierInput): Promise<{ supplier: Supplier }>;
+  createQuote(input: CreateQuoteInput): Promise<{ quote: Quote }>;
+  updateQuote(input: UpdateQuoteInput): Promise<{ quote: Quote }>;
+  selectQuote(input: SelectQuoteInput): Promise<{ quote: Quote }>;
   updateStore(input: UpdateStoreInput): Promise<{ store: Store }>;
   updateItem(input: UpdateItemInput): Promise<{ item: Item }>;
 }

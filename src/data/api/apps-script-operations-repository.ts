@@ -1,6 +1,6 @@
 import { AppsScriptClient } from "@/data/api/apps-script-client";
 import type { OperationsRepository } from "@/data/repositories/operations-repository";
-import type { DataSourceInfo, Item, Necessity, SessionUser, Store, TechnicalStatus, UpdateItemInput, UpdateStoreInput } from "@/domain/entities";
+import type { CreateQuoteInput, CreateSupplierInput, DataSourceInfo, Item, Necessity, Quote, QuotesWorkspace, SelectQuoteInput, SessionUser, Store, Supplier, TechnicalStatus, UpdateItemInput, UpdateQuoteInput, UpdateStoreInput } from "@/domain/entities";
 
 export interface BootstrapPayload {
   source: DataSourceInfo;
@@ -38,6 +38,26 @@ export class AppsScriptOperationsRepository implements OperationsRepository {
 
   getTechnicalStatus() {
     return this.client.call<TechnicalStatus>("technicalStatus");
+  }
+
+  getQuotesWorkspace() {
+    return this.client.call<QuotesWorkspace>("quotesWorkspace");
+  }
+
+  createSupplier(input: CreateSupplierInput) {
+    return this.client.call<{ supplier: Supplier }>("createSupplier", input);
+  }
+
+  createQuote(input: CreateQuoteInput) {
+    return this.client.call<{ quote: Quote }>("createQuote", input);
+  }
+
+  updateQuote(input: UpdateQuoteInput) {
+    return this.client.call<{ quote: Quote }>("updateQuote", input);
+  }
+
+  selectQuote(input: SelectQuoteInput) {
+    return this.client.call<{ quote: Quote }>("selectQuote", input);
   }
 
   updateStore(input: UpdateStoreInput) {

@@ -7,6 +7,7 @@ import {
   Building2,
   ClipboardList,
   Gauge,
+  PackageCheck,
   PanelLeft,
   SearchCheck,
   ShieldCheck,
@@ -23,12 +24,13 @@ const primaryItems = [
   { href: "/lojas", label: "Lojas", icon: Building2 },
   { href: "/itens", label: "Itens", icon: Boxes },
   { href: "/necessidades", label: "Necessidades", icon: ClipboardList },
+  { href: "/cotacoes", label: "Cotações", icon: ShoppingCart },
   { href: "/diagnostico", label: "Diagnóstico", icon: SearchCheck },
 ];
 
 const roadmapItems = [
-  { label: "Cotações", icon: ShoppingCart },
   { label: "Aprovações", icon: ShieldCheck },
+  { label: "Compras", icon: PackageCheck },
   { label: "Entregas", icon: Truck },
 ];
 

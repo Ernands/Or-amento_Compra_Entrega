@@ -12,10 +12,15 @@ const APP_CONFIG = {
         stores: "01_LOJAS",
         items: "02_ITENS",
         necessities: "03_NECESSIDADES",
+        suppliers: "04_FORNECEDORES",
+        quotes: "05_COTACOES",
         users: "09_USUARIOS",
         permissions: "10_PERMISSOES",
         history: "12_HISTORICO",
+        routes: "15_ROTAS_COMPRA",
+        lists: "14_LISTAS",
     },
+    timezone: "America/Fortaleza",
     technicalHeaders: ["created_at", "created_by", "updated_at", "updated_by", "version", "ativo"],
     setupTables: [
         { sheet: "01_LOJAS", keyHeader: "ID_Loja" },
@@ -69,6 +74,16 @@ function dispatchAction(action, payload, spreadsheet, user) {
             return buildBootstrap(spreadsheet, user);
         case "technicalStatus":
             return buildTechnicalStatus(spreadsheet);
+        case "quotesWorkspace":
+            return buildQuotesWorkspace(spreadsheet, user);
+        case "createSupplier":
+            return createSupplier(spreadsheet, user, payload);
+        case "createQuote":
+            return createQuote(spreadsheet, user, payload);
+        case "updateQuote":
+            return updateQuote(spreadsheet, user, payload);
+        case "selectQuote":
+            return selectQuote(spreadsheet, user, payload);
         case "updateNecessity":
             return updateNecessity(spreadsheet, user, payload);
         case "updateStore":
@@ -106,6 +121,217 @@ function buildBootstrap(spreadsheet, user) {
         items,
         necessities,
     };
+}
+function buildQuotesWorkspace(spreadsheet, user) {
+    assertModulePermission(spreadsheet, user, "Cotações", "Visualizar");
+    const suppliersTable = readTable(spreadsheet, APP_CONFIG.sheets.suppliers, ["ID_Fornecedor", "Fornecedor", "Ativo", "version"]);
+    const quotesTable = readTable(spreadsheet, APP_CONFIG.sheets.quotes, ["ID_Cotação", "ID_Necessidade", "ID_Loja", "ID_Item", "ID_Fornecedor", "Valor_Total", "Status", "version"]);
+    const routesTable = readTable(spreadsheet, APP_CONFIG.sheets.routes, ["ID_Rota", "ID_Item", "Ordem", "Origem_Destino", "Ativo"]);
+    const necessitiesTable = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "ID_Loja", "ID_Item"]);
+    const permissionTable = readTable(spreadsheet, APP_CONFIG.sheets.permissions, ["Perfil", "Módulo", "Visualizar", "Criar", "Editar"]);
+    const options = readQuoteOptions(spreadsheet);
+    const allowedNeeds = necessitiesTable.rows.filter((row) => isStoreAllowed(user, cell(necessitiesTable, row, "ID_Loja")));
+    const allowedItemIds = Object.fromEntries(allowedNeeds.map((row) => [cell(necessitiesTable, row, "ID_Item"), true]));
+    return {
+        suppliers: suppliersTable.rows.map((row) => mapSupplier(suppliersTable, row)),
+        quotes: quotesTable.rows.filter((row) => isStoreAllowed(user, cell(quotesTable, row, "ID_Loja"))).map((row) => mapQuote(quotesTable, row)),
+        routes: routesTable.rows.filter((row) => Boolean(allowedItemIds[cell(routesTable, row, "ID_Item")])).map((row) => mapPurchaseRoute(routesTable, row)),
+        options,
+        permissions: {
+            view: hasModulePermission(permissionTable, user, "Cotações", "Visualizar"),
+            create: hasModulePermission(permissionTable, user, "Cotações", "Criar"),
+            edit: hasModulePermission(permissionTable, user, "Cotações", "Editar"),
+            select: hasModulePermission(permissionTable, user, "Cotações", "Editar"),
+            createSupplier: hasModulePermission(permissionTable, user, "Fornecedores", "Criar"),
+        },
+        checkedAt: new Date().toISOString(),
+    };
+}
+function createSupplier(spreadsheet, user, payload) {
+    assertModulePermission(spreadsheet, user, "Fornecedores", "Criar");
+    return withScriptLock(() => {
+        const table = readTable(spreadsheet, APP_CONFIG.sheets.suppliers, ["ID_Fornecedor", "Fornecedor", "CNPJ_CPF", "Ativo", "created_at", "created_by", "updated_at", "updated_by", "version"]);
+        const name = validateRequiredText(payload.name);
+        const taxId = validateTaxId(payload.taxId);
+        if (taxId) {
+            const duplicate = table.rows.some((row) => onlyDigits(cell(table, row, "CNPJ_CPF")) === onlyDigits(taxId));
+            if (duplicate)
+                throw new ApiException("DUPLICATE_RECORD", "Já existe um fornecedor com este CNPJ/CPF.");
+        }
+        const id = nextInternalId(table, "ID_Fornecedor", "FOR", 6);
+        const now = new Date();
+        const row = Array(table.headers.length).fill("");
+        setCell(table, row, "ID_Fornecedor", id);
+        setCell(table, row, "Fornecedor", name);
+        setCell(table, row, "CNPJ_CPF", taxId);
+        setCell(table, row, "Cidade", validateShortText(payload.city));
+        setCell(table, row, "UF", validateUf(payload.state));
+        setCell(table, row, "Contato", validateShortText(payload.contact));
+        setCell(table, row, "Telefone", validateShortText(payload.phone));
+        setCell(table, row, "E-mail", validateOptionalEmail(payload.email));
+        setCell(table, row, "Nota_Fornecedor", validateOptionalRating(payload.rating));
+        setCell(table, row, "Ativo", validateYesNo(payload.active));
+        setCell(table, row, "Observações", validateText(payload.notes));
+        setCell(table, row, "Link_Site", validateOptionalUrl(payload.website));
+        setTechnicalCreationFields(table, row, user, now);
+        appendCreatedRow(spreadsheet, table, row, user, {
+            module: "FORNECEDORES",
+            recordId: id,
+            changes: [{ field: "Fornecedor", previous: "", next: name }],
+            reason: "Cadastro realizado pelo módulo Cotações.",
+            action: "CRIACAO",
+        });
+        return { supplier: mapSupplier(table, row) };
+    });
+}
+function createQuote(spreadsheet, user, payload) {
+    assertModulePermission(spreadsheet, user, "Cotações", "Criar");
+    return withScriptLock(() => {
+        const necessityId = requireString(payload.necessityId, "necessityId");
+        const necessitiesTable = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "ID_Loja", "ID_Item", "Status", "version", "updated_at", "updated_by"]);
+        const necessityMatch = findRowById(necessitiesTable, "ID_Necessidade", necessityId, "Necessidade");
+        const necessityRow = necessityMatch.row.slice();
+        const storeId = cell(necessitiesTable, necessityRow, "ID_Loja");
+        const itemId = cell(necessitiesTable, necessityRow, "ID_Item");
+        assertStoreScope(user, storeId);
+        const necessityStatus = normalizeStatus(cell(necessitiesTable, necessityRow, "Status"));
+        if (["NAO_INICIADO", "EM_COTACAO"].indexOf(necessityStatus) < 0) {
+            throw new ApiException("INVALID_STATUS", necessityStatus === "PENDENTE_DEFINICAO" ? "Defina o item antes de iniciar cotações." : "Esta necessidade não aceita novas cotações no status atual.");
+        }
+        const suppliersTable = readTable(spreadsheet, APP_CONFIG.sheets.suppliers, ["ID_Fornecedor", "Fornecedor", "Nota_Fornecedor", "Ativo"]);
+        const supplierId = requireString(payload.supplierId, "supplierId");
+        const supplier = findRowById(suppliersTable, "ID_Fornecedor", supplierId, "Fornecedor").row;
+        if (!isYes(cell(suppliersTable, supplier, "Ativo")))
+            throw new ApiException("VALIDATION_ERROR", "O fornecedor selecionado está inativo.");
+        const table = readTable(spreadsheet, APP_CONFIG.sheets.quotes, ["ID_Cotação", "ID_Necessidade", "ID_Loja", "ID_Item", "ID_Fornecedor", "Valor_Total", "Status", "Selecionada", "created_at", "created_by", "updated_at", "updated_by", "version", "ativo"]);
+        const values = validateQuoteValues(payload, readQuoteOptions(spreadsheet));
+        const id = nextInternalId(table, "ID_Cotação", "COT", 6);
+        const now = new Date();
+        const row = Array(table.headers.length).fill("");
+        setCell(table, row, "ID_Cotação", id);
+        setCell(table, row, "ID_Necessidade", necessityId);
+        setCell(table, row, "ID_Loja", storeId);
+        setCell(table, row, "ID_Item", itemId);
+        setCell(table, row, "ID_Fornecedor", supplierId);
+        writeQuoteValues(table, row, values);
+        setCell(table, row, "Nota_Fornecedor", cell(suppliersTable, supplier, "Nota_Fornecedor"));
+        setCell(table, row, "Selecionada", "Não");
+        setCell(table, row, "Responsável", user.name);
+        setCell(table, row, "ativo", "Sim");
+        setTechnicalCreationFields(table, row, user, now);
+        const quoteRange = table.sheet.getRange(table.sheet.getLastRow() + 1, 1, 1, table.headers.length);
+        const necessityRange = necessitiesTable.sheet.getRange(necessitiesTable.headerRow + necessityMatch.rowIndex + 1, 1, 1, necessitiesTable.headers.length);
+        const previousNecessity = necessityRange.getValues()[0];
+        const auditEntries = [{
+                module: "COTACOES",
+                recordId: id,
+                changes: [
+                    { field: "ID_Necessidade", previous: "", next: necessityId },
+                    { field: "ID_Fornecedor", previous: "", next: supplierId },
+                    { field: "Valor_Total", previous: "", next: values.total },
+                    { field: "Status", previous: "", next: values.status },
+                ],
+                reason: String(payload.notes || ""),
+                action: "CRIACAO",
+            }];
+        try {
+            quoteRange.setValues([row]);
+            if (necessityStatus === "NAO_INICIADO") {
+                const previousStatus = cell(necessitiesTable, necessityRow, "Status");
+                setCell(necessitiesTable, necessityRow, "Status", "EM_COTACAO");
+                setCell(necessitiesTable, necessityRow, "version", Number(cell(necessitiesTable, necessityRow, "version") || 1) + 1);
+                setCell(necessitiesTable, necessityRow, "updated_at", now);
+                setCell(necessitiesTable, necessityRow, "updated_by", user.id);
+                necessityRange.setValues([necessityRow]);
+                auditEntries.push({ module: "NECESSIDADES", recordId: necessityId, changes: [{ field: "Status", previous: previousStatus, next: "EM_COTACAO" }], reason: `Primeira cotação registrada: ${id}`, action: "ALTERACAO" });
+            }
+            appendAuditBatch(spreadsheet, user, auditEntries);
+            SpreadsheetApp.flush();
+        }
+        catch (error) {
+            quoteRange.clearContent();
+            necessityRange.setValues([previousNecessity]);
+            SpreadsheetApp.flush();
+            throw error;
+        }
+        return { quote: mapQuote(table, row) };
+    });
+}
+function updateQuote(spreadsheet, user, payload) {
+    assertModulePermission(spreadsheet, user, "Cotações", "Editar");
+    return withScriptLock(() => {
+        const id = requireString(payload.id, "id");
+        const expectedVersion = requirePositiveInteger(payload.version, "version");
+        const changes = requireChanges(payload.changes, ["supplierId", "origin", "unitPrice", "quantity", "freight", "otherCosts", "paymentMethod", "leadTimeDays", "proposalValidUntil", "link", "status", "quoteDate", "notes"]);
+        const table = readTable(spreadsheet, APP_CONFIG.sheets.quotes, ["ID_Cotação", "ID_Loja", "ID_Fornecedor", "Status", "Selecionada", "version", "updated_at", "updated_by"]);
+        const found = findVersionedRow(table, "ID_Cotação", id, expectedVersion, "Cotação");
+        assertStoreScope(user, cell(table, found.current, "ID_Loja"));
+        if (isYes(cell(table, found.current, "Selecionada")) || normalizeQuoteStatus(cell(table, found.current, "Status")) === "SELECIONADA") {
+            throw new ApiException("LOCKED_RECORD", "A proposta selecionada está bloqueada. Selecione outra proposta antes de editá-la.");
+        }
+        const suppliersTable = readTable(spreadsheet, APP_CONFIG.sheets.suppliers, ["ID_Fornecedor", "Nota_Fornecedor", "Ativo"]);
+        const supplierId = requireString(changes.supplierId, "supplierId");
+        const supplier = findRowById(suppliersTable, "ID_Fornecedor", supplierId, "Fornecedor").row;
+        if (!isYes(cell(suppliersTable, supplier, "Ativo")))
+            throw new ApiException("VALIDATION_ERROR", "O fornecedor selecionado está inativo.");
+        const values = validateQuoteValues(changes, readQuoteOptions(spreadsheet));
+        const audited = [];
+        applyChange(table, found.current, "ID_Fornecedor", supplierId, (value) => value, audited);
+        applyQuoteChanges(table, found.current, values, audited);
+        applyChange(table, found.current, "Nota_Fornecedor", cell(suppliersTable, supplier, "Nota_Fornecedor"), (value) => value, audited);
+        persistUpdatedRow(spreadsheet, table, found.rowIndex, found.current, found.currentVersion, user, "COTACOES", id, audited, String(payload.reason || ""));
+        return { quote: mapQuote(table, found.current) };
+    });
+}
+function selectQuote(spreadsheet, user, payload) {
+    assertModulePermission(spreadsheet, user, "Cotações", "Editar");
+    return withScriptLock(() => {
+        var _a;
+        const id = requireString(payload.id, "id");
+        const expectedVersion = requirePositiveInteger(payload.version, "version");
+        const table = readTable(spreadsheet, APP_CONFIG.sheets.quotes, ["ID_Cotação", "ID_Necessidade", "ID_Loja", "Status", "Selecionada", "Validade_Proposta", "version", "updated_at", "updated_by"]);
+        const target = findVersionedRow(table, "ID_Cotação", id, expectedVersion, "Cotação");
+        assertStoreScope(user, cell(table, target.current, "ID_Loja"));
+        if (normalizeQuoteStatus(cell(table, target.current, "Status")) !== "RECEBIDA")
+            throw new ApiException("INVALID_STATUS", "Somente propostas com status RECEBIDA podem ser selecionadas.");
+        const validUntil = dateCell(table, target.current, "Validade_Proposta");
+        if (validUntil && validUntil < formatDateOnly(new Date()))
+            throw new ApiException("EXPIRED_QUOTE", "A validade desta proposta expirou.");
+        const necessityId = cell(table, target.current, "ID_Necessidade");
+        const affected = table.rows
+            .map((row, rowIndex) => ({ row: row.slice(), rowIndex }))
+            .filter((entry) => cell(table, entry.row, "ID_Necessidade") === necessityId && (cell(table, entry.row, "ID_Cotação") === id || isYes(cell(table, entry.row, "Selecionada"))));
+        const writes = [];
+        const audits = [];
+        const now = new Date();
+        affected.forEach((entry) => {
+            const quoteId = cell(table, entry.row, "ID_Cotação");
+            const selecting = quoteId === id;
+            const changes = [];
+            applyChange(table, entry.row, "Selecionada", selecting, validateYesNo, changes);
+            applyChange(table, entry.row, "Status", selecting ? "Selecionada" : "Recebida", (value) => value, changes);
+            if (!changes.length)
+                return;
+            setCell(table, entry.row, "version", Number(cell(table, entry.row, "version") || 1) + 1);
+            setCell(table, entry.row, "updated_at", now);
+            setCell(table, entry.row, "updated_by", user.id);
+            const range = table.sheet.getRange(table.headerRow + entry.rowIndex + 1, 1, 1, table.headers.length);
+            writes.push({ range, previous: range.getValues()[0], next: entry.row });
+            audits.push({ module: "COTACOES", recordId: quoteId, changes, reason: String(payload.reason || "Proposta escolhida para futura aprovação."), action: "SELECAO" });
+        });
+        try {
+            writes.forEach((write) => write.range.setValues([write.next]));
+            appendAuditBatch(spreadsheet, user, audits);
+            SpreadsheetApp.flush();
+        }
+        catch (error) {
+            writes.forEach((write) => write.range.setValues([write.previous]));
+            SpreadsheetApp.flush();
+            throw error;
+        }
+        const selectedRow = ((_a = writes.find((write) => cell(table, write.next, "ID_Cotação") === id)) === null || _a === void 0 ? void 0 : _a.next) || target.current;
+        return { quote: mapQuote(table, selectedRow) };
+    });
 }
 function updateNecessity(spreadsheet, user, payload) {
     const id = requireString(payload.id, "id");
@@ -257,40 +483,52 @@ function assertCanEditNecessity(spreadsheet, user, storeId) {
     assertStoreScope(user, storeId);
 }
 function assertStoreScope(user, storeId) {
-    if (user.allowedStoreIds !== "TODAS" && user.allowedStoreIds.indexOf(storeId) < 0) {
+    if (!isStoreAllowed(user, storeId)) {
         throw new ApiException("PERMISSION_DENIED", "Esta loja não está no seu escopo de acesso.");
     }
 }
+function isStoreAllowed(user, storeId) {
+    return user.allowedStoreIds === "TODAS" || user.allowedStoreIds.indexOf(storeId) >= 0;
+}
 function assertModulePermission(spreadsheet, user, module, action) {
     const table = readTable(spreadsheet, APP_CONFIG.sheets.permissions, ["Perfil", "Módulo", action]);
-    const row = table.rows.find((candidate) => normalizeProfile(cell(table, candidate, "Perfil")) === user.profile && normalizeHeader(cell(table, candidate, "Módulo")) === normalizeHeader(module));
-    if (!row || !isYes(cell(table, row, action))) {
+    if (!hasModulePermission(table, user, module, action)) {
         throw new ApiException("PERMISSION_DENIED", `Você não possui permissão para ${normalizeText(action)} em ${module}.`);
     }
 }
+function hasModulePermission(table, user, module, action) {
+    const row = table.rows.find((candidate) => normalizeProfile(cell(table, candidate, "Perfil")) === user.profile && normalizeHeader(cell(table, candidate, "Módulo")) === normalizeHeader(module));
+    return Boolean(row && isYes(cell(table, row, action)));
+}
 function appendAudit(spreadsheet, user, module, recordId, changes, reason) {
+    appendAuditBatch(spreadsheet, user, [{ module, recordId, changes, reason }]);
+}
+function appendAuditBatch(spreadsheet, user, entries) {
+    const validEntries = entries.filter((entry) => entry.changes.length > 0);
+    if (!validEntries.length)
+        return;
     const table = readTable(spreadsheet, APP_CONFIG.sheets.history, ["ID_Histórico", "Data_Hora", "ID_Usuário", "Módulo", "ID_Registro", "Ação", "Campo", "Valor_Anterior", "Valor_Novo"]);
     const idColumn = columnIndex(table, "ID_Histórico");
     let nextNumber = table.rows.reduce((highest, row) => {
         const match = String(row[idColumn] || "").match(/HIS-(\d+)/);
         return match ? Math.max(highest, Number(match[1])) : highest;
     }, 0) + 1;
-    const output = changes.map((change) => {
+    const output = validEntries.flatMap((entry) => entry.changes.map((change) => {
         const row = Array(table.headers.length).fill("");
         setCell(table, row, "ID_Histórico", `HIS-${String(nextNumber++).padStart(6, "0")}`);
         setCell(table, row, "Data_Hora", new Date());
         setCell(table, row, "ID_Usuário", user.id);
-        setCell(table, row, "Módulo", module);
-        setCell(table, row, "ID_Registro", recordId);
-        setCell(table, row, "Ação", "ALTERACAO");
+        setCell(table, row, "Módulo", entry.module);
+        setCell(table, row, "ID_Registro", entry.recordId);
+        setCell(table, row, "Ação", entry.action || "ALTERACAO");
         setCell(table, row, "Campo", change.field);
         setCell(table, row, "Valor_Anterior", change.previous);
         setCell(table, row, "Valor_Novo", change.next);
         setCell(table, row, "Origem", "SISTEMA_WEB");
         setCell(table, row, "Referência", user.email);
-        setCell(table, row, "Observações", reason);
+        setCell(table, row, "Observações", entry.reason);
         return row;
-    });
+    }));
     table.sheet.getRange(table.sheet.getLastRow() + 1, 1, output.length, table.headers.length).setValues(output);
 }
 function withScriptLock(callback) {
@@ -343,6 +581,42 @@ function persistUpdatedRow(spreadsheet, table, rowIndex, current, currentVersion
         throw error;
     }
 }
+function appendCreatedRow(spreadsheet, table, row, user, audit) {
+    const range = table.sheet.getRange(table.sheet.getLastRow() + 1, 1, 1, table.headers.length);
+    try {
+        range.setValues([row]);
+        appendAuditBatch(spreadsheet, user, [audit]);
+        SpreadsheetApp.flush();
+    }
+    catch (error) {
+        range.clearContent();
+        SpreadsheetApp.flush();
+        throw error;
+    }
+}
+function setTechnicalCreationFields(table, row, user, now) {
+    setCell(table, row, "created_at", now);
+    setCell(table, row, "created_by", user.id);
+    setCell(table, row, "updated_at", now);
+    setCell(table, row, "updated_by", user.id);
+    setCell(table, row, "version", 1);
+}
+function nextInternalId(table, idHeader, prefix, width) {
+    const idColumn = columnIndex(table, idHeader);
+    const pattern = new RegExp(`^${prefix}-(\\d+)$`);
+    const next = table.rows.reduce((highest, row) => {
+        const match = String(row[idColumn] || "").trim().match(pattern);
+        return match ? Math.max(highest, Number(match[1])) : highest;
+    }, 0) + 1;
+    return `${prefix}-${String(next).padStart(width, "0")}`;
+}
+function findRowById(table, idHeader, id, entityLabel) {
+    const idColumn = columnIndex(table, idHeader);
+    const rowIndex = table.rows.findIndex((row) => String(row[idColumn] || "").trim() === id);
+    if (rowIndex < 0)
+        throw new ApiException("NOT_FOUND", `${entityLabel} não encontrado(a).`);
+    return { row: table.rows[rowIndex], rowIndex };
+}
 function readTable(spreadsheet, sheetName, requiredHeaders) {
     const sheet = spreadsheet.getSheetByName(sheetName);
     if (!sheet)
@@ -369,6 +643,63 @@ function mapItem(table, row) {
 }
 function mapNecessity(table, row) {
     return { id: cell(table, row, "ID_Necessidade"), storeId: cell(table, row, "ID_Loja"), itemId: cell(table, row, "ID_Item"), quantity: Number(cell(table, row, "Qtd_Planejada") || 1), priority: normalizePriority(cell(table, row, "Prioridade")), status: normalizeStatus(cell(table, row, "Status")), version: Number(cell(table, row, "version") || 1) };
+}
+function mapSupplier(table, row) {
+    const ratingValue = cell(table, row, "Nota_Fornecedor");
+    return {
+        id: cell(table, row, "ID_Fornecedor"),
+        name: cell(table, row, "Fornecedor"),
+        taxId: cell(table, row, "CNPJ_CPF"),
+        city: cell(table, row, "Cidade"),
+        state: cell(table, row, "UF"),
+        contact: cell(table, row, "Contato"),
+        phone: cell(table, row, "Telefone"),
+        email: cell(table, row, "E-mail"),
+        rating: ratingValue === "" ? null : Number(ratingValue),
+        active: !cell(table, row, "Ativo") || isYes(cell(table, row, "Ativo")),
+        lastPurchase: dateCell(table, row, "Última_Compra"),
+        notes: cell(table, row, "Observações"),
+        website: cell(table, row, "Link_Site"),
+        version: Number(cell(table, row, "version") || 1),
+    };
+}
+function mapQuote(table, row) {
+    const ratingValue = cell(table, row, "Nota_Fornecedor");
+    return {
+        id: cell(table, row, "ID_Cotação"),
+        necessityId: cell(table, row, "ID_Necessidade"),
+        storeId: cell(table, row, "ID_Loja"),
+        itemId: cell(table, row, "ID_Item"),
+        supplierId: cell(table, row, "ID_Fornecedor"),
+        origin: cell(table, row, "Origem_Cotação"),
+        unitPrice: Number(cell(table, row, "Preço_Unitário") || 0),
+        quantity: Number(cell(table, row, "Quantidade") || 0),
+        freight: Number(cell(table, row, "Frete") || 0),
+        otherCosts: Number(cell(table, row, "Outros_Custos") || 0),
+        total: Number(cell(table, row, "Valor_Total") || 0),
+        paymentMethod: cell(table, row, "Forma_Pagamento"),
+        leadTimeDays: Number(cell(table, row, "Prazo_Dias") || 0),
+        proposalValidUntil: dateCell(table, row, "Validade_Proposta"),
+        link: cell(table, row, "Link"),
+        supplierRating: ratingValue === "" ? null : Number(ratingValue),
+        status: normalizeQuoteStatus(cell(table, row, "Status")),
+        selected: isYes(cell(table, row, "Selecionada")),
+        quoteDate: dateCell(table, row, "Data_Cotação"),
+        responsible: cell(table, row, "Responsável"),
+        notes: cell(table, row, "Observações"),
+        version: Number(cell(table, row, "version") || 1),
+        active: !cell(table, row, "ativo") || isYes(cell(table, row, "ativo")),
+    };
+}
+function mapPurchaseRoute(table, row) {
+    return {
+        id: cell(table, row, "ID_Rota"),
+        itemId: cell(table, row, "ID_Item"),
+        order: Number(cell(table, row, "Ordem") || 0),
+        originDestination: cell(table, row, "Origem_Destino"),
+        active: !cell(table, row, "Ativo") || isYes(cell(table, row, "Ativo")),
+        notes: cell(table, row, "Observações"),
+    };
 }
 function parseRequest(event) {
     const contents = event.postData && event.postData.contents;
@@ -408,6 +739,8 @@ function normalizeText(value) { return value.normalize("NFD").replace(/[\u0300-\
 function columnIndex(table, header) { const index = table.normalizedHeaders.indexOf(normalizeHeader(header)); if (index < 0)
     throw new ApiException("STRUCTURE_REQUIRED", `Campo técnico ausente: ${header}`); return index; }
 function cell(table, row, header) { const index = table.normalizedHeaders.indexOf(normalizeHeader(header)); return index < 0 ? "" : String(row[index] || "").trim(); }
+function dateCell(table, row, header) { const index = table.normalizedHeaders.indexOf(normalizeHeader(header)); if (index < 0 || !row[index])
+    return ""; const value = row[index]; return value instanceof Date ? formatDateOnly(value) : String(value).trim().slice(0, 10); }
 function setCell(table, row, header, value) { const index = table.normalizedHeaders.indexOf(normalizeHeader(header)); if (index >= 0)
     row[index] = value; }
 function isYes(value) { return ["sim", "true", "1", "ativo"].indexOf(normalizeText(value)) >= 0; }
@@ -418,6 +751,10 @@ function requirePositiveInteger(value, field) { const parsed = Number(value); if
     throw new ApiException("VALIDATION_ERROR", `${field} deve ser inteiro positivo.`); return parsed; }
 function validatePositiveNumber(value) { const parsed = Number(value); if (!Number.isFinite(parsed) || parsed <= 0)
     throw new ApiException("VALIDATION_ERROR", "Quantidade deve ser maior que zero."); return parsed; }
+function validateNonNegativeNumber(value, field = "valor") { const parsed = Number(value); if (!Number.isFinite(parsed) || parsed < 0)
+    throw new ApiException("VALIDATION_ERROR", `${field} não pode ser negativo.`); return Math.round((parsed + Number.EPSILON) * 100) / 100; }
+function validateNonNegativeInteger(value, field) { const parsed = Number(value); if (!Number.isInteger(parsed) || parsed < 0)
+    throw new ApiException("VALIDATION_ERROR", `${field} deve ser inteiro igual ou maior que zero.`); return parsed; }
 function validateRequiredText(value) { const result = requireString(value, "valor"); if (result.length > 500)
     throw new ApiException("VALIDATION_ERROR", "Texto obrigatório muito longo."); return result; }
 function validateShortText(value) { if (typeof value !== "string" || value.length > 500)
@@ -437,6 +774,97 @@ function validateText(value) { if (typeof value !== "string" || value.length > 2
     throw new ApiException("VALIDATION_ERROR", "Texto inválido ou muito longo."); return value.trim(); }
 function validateStatus(value) { const status = requireString(value, "status").toLocaleUpperCase(); if (!(status in STATUS_TRANSITIONS))
     throw new ApiException("VALIDATION_ERROR", "Status inválido."); return status; }
+function validateTaxId(value) { const result = validateShortText(value); const digits = onlyDigits(result); if (result && [11, 14].indexOf(digits.length) < 0)
+    throw new ApiException("VALIDATION_ERROR", "CNPJ/CPF deve conter 11 ou 14 dígitos."); return result; }
+function validateOptionalRating(value) { if (value === null || value === undefined || value === "")
+    return ""; const parsed = Number(value); if (!Number.isFinite(parsed) || parsed < 0 || parsed > 5)
+    throw new ApiException("VALIDATION_ERROR", "Nota do fornecedor deve estar entre 0 e 5."); return parsed; }
+function validateOptionalUrl(value) { const result = validateShortText(value); if (result && !/^https?:\/\//i.test(result))
+    throw new ApiException("VALIDATION_ERROR", "Informe uma URL iniciada por http:// ou https://."); return result; }
+function validateDateOnly(value, field, required = false) { if ((value === "" || value === null || value === undefined) && !required)
+    return ""; const result = requireString(value, field); if (!/^\d{4}-\d{2}-\d{2}$/.test(result) || Number.isNaN(new Date(`${result}T12:00:00Z`).getTime()))
+    throw new ApiException("VALIDATION_ERROR", `${field} deve usar uma data válida.`); return result; }
+function onlyDigits(value) { return value.replace(/\D/g, ""); }
+function formatDateOnly(value) { return Utilities.formatDate(value, APP_CONFIG.timezone, "yyyy-MM-dd"); }
+function readQuoteOptions(spreadsheet) {
+    const table = readTable(spreadsheet, APP_CONFIG.sheets.lists, ["Status Cotação", "Origem Cotação", "Forma Pagamento"]);
+    const values = (header) => table.rows.map((row) => cell(table, row, header).trim()).filter((value, index, all) => Boolean(value) && all.indexOf(value) === index);
+    return {
+        statuses: values("Status Cotação")
+            .filter((status) => ["rascunho", "emandamento", "recebida"].indexOf(normalizeHeader(status)) >= 0)
+            .map(normalizeQuoteStatus),
+        origins: values("Origem Cotação"),
+        paymentMethods: values("Forma Pagamento"),
+    };
+}
+function validateListedValue(value, options, field) {
+    const result = validateRequiredText(value);
+    const match = options.find((option) => normalizeText(option) === normalizeText(result));
+    if (!match)
+        throw new ApiException("VALIDATION_ERROR", `${field} não consta na aba 14_LISTAS.`);
+    return match;
+}
+function validateQuoteValues(payload, options) {
+    const quantity = validatePositiveNumber(payload.quantity);
+    const unitPrice = validateNonNegativeNumber(payload.unitPrice, "Preço unitário");
+    const freight = validateNonNegativeNumber(payload.freight, "Frete");
+    const otherCosts = validateNonNegativeNumber(payload.otherCosts, "Outros custos");
+    const quoteDate = validateDateOnly(payload.quoteDate, "Data da cotação", true);
+    const proposalValidUntil = validateDateOnly(payload.proposalValidUntil, "Validade da proposta");
+    if (proposalValidUntil && proposalValidUntil < quoteDate)
+        throw new ApiException("VALIDATION_ERROR", "A validade da proposta não pode ser anterior à data da cotação.");
+    return {
+        supplierId: requireString(payload.supplierId, "supplierId"),
+        origin: options ? validateListedValue(payload.origin, options.origins, "Origem da cotação") : validateRequiredText(payload.origin),
+        unitPrice,
+        quantity,
+        freight,
+        otherCosts,
+        total: Math.round((quantity * unitPrice + freight + otherCosts + Number.EPSILON) * 100) / 100,
+        paymentMethod: options ? validateListedValue(payload.paymentMethod, options.paymentMethods, "Forma de pagamento") : validateRequiredText(payload.paymentMethod),
+        leadTimeDays: validateNonNegativeInteger(payload.leadTimeDays, "Prazo em dias"),
+        proposalValidUntil,
+        link: validateOptionalUrl(payload.link),
+        status: (() => {
+            const status = validateEditableQuoteStatus(payload.status);
+            if (options && options.statuses.indexOf(status) < 0)
+                throw new ApiException("VALIDATION_ERROR", "Status de cotação não consta na aba 14_LISTAS.");
+            return status;
+        })(),
+        quoteDate,
+        notes: validateText(payload.notes),
+    };
+}
+function writeQuoteValues(table, row, values) {
+    setCell(table, row, "Origem_Cotação", values.origin);
+    setCell(table, row, "Preço_Unitário", values.unitPrice);
+    setCell(table, row, "Quantidade", values.quantity);
+    setCell(table, row, "Frete", values.freight);
+    setCell(table, row, "Outros_Custos", values.otherCosts);
+    setCell(table, row, "Valor_Total", values.total);
+    setCell(table, row, "Forma_Pagamento", values.paymentMethod);
+    setCell(table, row, "Prazo_Dias", values.leadTimeDays);
+    setCell(table, row, "Validade_Proposta", values.proposalValidUntil);
+    setCell(table, row, "Link", values.link);
+    setCell(table, row, "Status", quoteStatusToSheet(values.status));
+    setCell(table, row, "Data_Cotação", values.quoteDate);
+    setCell(table, row, "Observações", values.notes);
+}
+function applyQuoteChanges(table, row, values, audit) {
+    applyChange(table, row, "Origem_Cotação", values.origin, (value) => value, audit);
+    applyChange(table, row, "Preço_Unitário", values.unitPrice, (value) => value, audit);
+    applyChange(table, row, "Quantidade", values.quantity, (value) => value, audit);
+    applyChange(table, row, "Frete", values.freight, (value) => value, audit);
+    applyChange(table, row, "Outros_Custos", values.otherCosts, (value) => value, audit);
+    applyChange(table, row, "Valor_Total", values.total, (value) => value, audit);
+    applyChange(table, row, "Forma_Pagamento", values.paymentMethod, (value) => value, audit);
+    applyChange(table, row, "Prazo_Dias", values.leadTimeDays, (value) => value, audit);
+    applyChange(table, row, "Validade_Proposta", values.proposalValidUntil, (value) => value, audit);
+    applyChange(table, row, "Link", values.link, (value) => value, audit);
+    applyChange(table, row, "Status", quoteStatusToSheet(values.status), (value) => value, audit);
+    applyChange(table, row, "Data_Cotação", values.quoteDate, (value) => value, audit);
+    applyChange(table, row, "Observações", values.notes, (value) => value, audit);
+}
 function applyChange(table, row, header, rawValue, validator, audit) {
     if (rawValue === undefined)
         return;
@@ -451,6 +879,10 @@ const STATUS_TRANSITIONS = {
     PENDENTE_DEFINICAO: ["NAO_INICIADO", "CANCELADO"], NAO_INICIADO: ["EM_COTACAO", "CANCELADO"], EM_COTACAO: ["AGUARDANDO_APROVACAO", "CANCELADO"], AGUARDANDO_APROVACAO: ["APROVADO", "EM_COTACAO", "CANCELADO"], APROVADO: ["COMPRADO", "EM_COTACAO", "CANCELADO"], COMPRADO: ["EM_TRANSPORTE", "CANCELADO"], EM_TRANSPORTE: ["ENTREGUE", "DIVERGENCIA"], ENTREGUE: ["CONFERIDO", "DIVERGENCIA"], CONFERIDO: ["CONCLUIDO", "DIVERGENCIA"], CONCLUIDO: [], CANCELADO: [], DIVERGENCIA: ["EM_TRANSPORTE", "ENTREGUE", "CONFERIDO"],
 };
 function normalizeStatus(value) { const key = normalizeHeader(value).toLocaleUpperCase(); const aliases = { PENDENTEDEFINICAO: "PENDENTE_DEFINICAO", NAOINICIADO: "NAO_INICIADO", EMCOTACAO: "EM_COTACAO", AGUARDANDOAPROVACAO: "AGUARDANDO_APROVACAO", APROVADO: "APROVADO", COMPRADO: "COMPRADO", EMTRANSPORTE: "EM_TRANSPORTE", ENTREGUE: "ENTREGUE", CONFERIDO: "CONFERIDO", CONCLUIDO: "CONCLUIDO", CANCELADO: "CANCELADO", DIVERGENCIA: "DIVERGENCIA", COMDIVERGENCIA: "DIVERGENCIA" }; return aliases[key] || "NAO_INICIADO"; }
+function normalizeQuoteStatus(value) { const key = normalizeHeader(value); const aliases = { rascunho: "RASCUNHO", emandamento: "EM_ANDAMENTO", recebida: "RECEBIDA", selecionada: "SELECIONADA", descartada: "DESCARTADA", expirada: "EXPIRADA" }; return aliases[key] || "RASCUNHO"; }
+function validateEditableQuoteStatus(value) { const raw = requireString(value, "status"); const key = normalizeHeader(raw); if (["rascunho", "emandamento", "recebida"].indexOf(key) < 0)
+    throw new ApiException("VALIDATION_ERROR", "Status de cotação inválido para edição."); return normalizeQuoteStatus(raw); }
+function quoteStatusToSheet(status) { const labels = { RASCUNHO: "Rascunho", EM_ANDAMENTO: "Em andamento", RECEBIDA: "Recebida", SELECIONADA: "Selecionada", DESCARTADA: "Descartada", EXPIRADA: "Expirada" }; return labels[status] || "Rascunho"; }
 function normalizePriority(value) { const key = normalizeHeader(value); const aliases = { baixa: "BAIXA", media: "MEDIA", alta: "ALTA", critica: "CRITICA" }; return aliases[key] || "MEDIA"; }
 function normalizeProfile(value) { const key = normalizeHeader(value); const aliases = { administrador: "ADMINISTRADOR", gestoraprovador: "GESTOR", gestor: "GESTOR", compras: "COMPRAS", responsavelloja: "RESPONSAVEL_LOJA", consulta: "CONSULTA" }; return aliases[key] || "CONSULTA"; }
 function assertStatusTransition(previous, next) { const from = normalizeStatus(previous); const to = normalizeStatus(next); if ((STATUS_TRANSITIONS[from] || []).indexOf(to) < 0)

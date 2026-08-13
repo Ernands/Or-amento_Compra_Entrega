@@ -57,6 +57,22 @@ describe("AppsScriptClient", () => {
 
     expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({ action: "technicalStatus", credential: "TOKEN", payload: {} });
   });
+
+  it.each([
+    ["quotesWorkspace", {}],
+    ["createSupplier", { name: "Fornecedor DEV", active: true }],
+    ["createQuote", { necessityId: "NEC-000001", supplierId: "FOR-000001", unitPrice: 10, quantity: 2 }],
+    ["updateQuote", { id: "COT-000001", version: 3, changes: { unitPrice: 12 } }],
+    ["selectQuote", { id: "COT-000001", version: 4, reason: "Melhor proposta" }],
+  ])("preserva o contrato autenticado da ação %s", async (action, payload) => {
+    const fetchMock = successfulFetch({});
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new AppsScriptClient("https://script.google.com/macros/s/DEV/exec", "TOKEN");
+
+    await client.call(action, payload);
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({ action, credential: "TOKEN", payload });
+  });
 });
 
 function successfulFetch(data: unknown) {

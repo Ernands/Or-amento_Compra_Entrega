@@ -1,5 +1,6 @@
 import { useDeferredValue, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, Search } from "lucide-react";
+import { ArrowRight, ChevronLeft, ChevronRight, Search } from "lucide-react";
+import { Link } from "react-router-dom";
 
 import { PageHeader } from "@/components/app/page-header";
 import { ErrorPanel, LoadingPanel } from "@/components/app/page-state";
@@ -81,12 +82,13 @@ export function NecessitiesPage() {
       <Card className="overflow-hidden py-0 shadow-none">
         <CardContent className="overflow-x-auto p-0">
           <Table>
-            <TableHeader><TableRow><TableHead className="pl-6">Necessidade</TableHead><TableHead>Loja</TableHead><TableHead>Item</TableHead><TableHead className="text-right">Qtd.</TableHead><TableHead>Prioridade</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
+            <TableHeader><TableRow><TableHead className="pl-6">Necessidade</TableHead><TableHead>Loja</TableHead><TableHead>Item</TableHead><TableHead className="text-right">Qtd.</TableHead><TableHead>Prioridade</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Cotações</TableHead></TableRow></TableHeader>
             <TableBody>
               {visible.map((need) => {
                 const item = itemMap.get(need.itemId);
                 const store = storeMap.get(need.storeId);
-                return <TableRow key={need.id}><TableCell className="pl-6 font-mono text-xs">{need.id}</TableCell><TableCell>{store?.name}<p className="font-mono text-xs text-muted-foreground">{store?.id}</p></TableCell><TableCell><p className="font-medium">{item?.name}</p><p className="font-mono text-xs text-muted-foreground">{item?.operationalCode}</p></TableCell><TableCell className="text-right tabular-nums">{need.quantity}</TableCell><TableCell>{need.priority}</TableCell><TableCell><StatusBadge status={need.status} /></TableCell></TableRow>;
+                const eligibleForQuote = need.status === "NAO_INICIADO" || need.status === "EM_COTACAO";
+                return <TableRow key={need.id}><TableCell className="pl-6 font-mono text-xs">{need.id}</TableCell><TableCell>{store?.name}<p className="font-mono text-xs text-muted-foreground">{store?.id}</p></TableCell><TableCell><p className="font-medium">{item?.name}</p><p className="font-mono text-xs text-muted-foreground">{item?.operationalCode}</p></TableCell><TableCell className="text-right tabular-nums">{need.quantity}</TableCell><TableCell>{need.priority}</TableCell><TableCell><StatusBadge status={need.status} /></TableCell><TableCell className="text-right">{eligibleForQuote ? <Button asChild variant="ghost" size="sm"><Link to="/cotacoes" state={{ necessityId: need.id }}>Cotar<ArrowRight /></Link></Button> : null}</TableCell></TableRow>;
               })}
             </TableBody>
           </Table>

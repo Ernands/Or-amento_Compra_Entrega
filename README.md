@@ -6,12 +6,13 @@ Sistema web para controlar necessidade → cotação → aprovação → compra 
 
 O primeiro fluxo executável está pronto:
 
-- SPA responsiva com dashboard, lojas, detalhe de loja, itens, necessidades e diagnóstico;
+- SPA responsiva com dashboard, lojas, detalhe de loja, itens, necessidades, cotações e diagnóstico;
 - edição de lojas e itens com validação, controle de versão, permissões e auditoria;
 - necessidades com paginação em 100, 250 ou 500 registros e opção para exibir as 2.295 relações de uma vez;
 - planilha DEV nativa validada e snapshot verificado para desenvolvimento seguro;
 - login Google Identity Services para produção;
-- Google Apps Script Web App com `bootstrap` em lote, diagnóstico técnico autenticado e escrita versionada de lojas, itens e necessidades;
+- módulo Cotações ao vivo: cadastro mínimo de fornecedores, propostas por necessidade, cálculo de custos, filtros, edição, comparação e seleção para a futura aprovação;
+- Google Apps Script Web App com `bootstrap` em lote, diagnóstico técnico autenticado e escrita versionada de lojas, itens, necessidades, fornecedores e cotações;
 - permissões por perfil e escopo de loja no backend;
 - auditoria, máquina de estados e `LockService`;
 - CI e publicação automática no GitHub Pages.
@@ -109,7 +110,7 @@ O repositório oficial é [Ernands/Or-amento_Compra_Entrega](https://github.com/
 
 ## Testes prioritários
 
-Há cobertura inicial para cálculo de cotação, IDs, permissões e máquina de estados. A CI também compila o frontend e o Apps Script.
+Há cobertura para o contrato HTTP de Cotações, cálculo de total no domínio e no backend, valores de `14_LISTAS`, IDs, permissões e máquina de estados. A CI também executa ESLint, TypeScript e compila o frontend e o Apps Script.
 
 ## Ambientes
 

@@ -145,6 +145,130 @@ export interface TechnicalStatus {
   tables: TechnicalTableStatus[];
 }
 
+export type QuoteStatus = "RASCUNHO" | "EM_ANDAMENTO" | "RECEBIDA" | "SELECIONADA" | "DESCARTADA" | "EXPIRADA";
+
+export interface Supplier {
+  id: string;
+  name: string;
+  taxId: string;
+  city: string;
+  state: string;
+  contact: string;
+  phone: string;
+  email: string;
+  rating: number | null;
+  active: boolean;
+  lastPurchase: string;
+  notes: string;
+  website: string;
+  version: number;
+}
+
+export interface Quote {
+  id: string;
+  necessityId: string;
+  storeId: string;
+  itemId: string;
+  supplierId: string;
+  origin: string;
+  unitPrice: number;
+  quantity: number;
+  freight: number;
+  otherCosts: number;
+  total: number;
+  paymentMethod: string;
+  leadTimeDays: number;
+  proposalValidUntil: string;
+  link: string;
+  supplierRating: number | null;
+  status: QuoteStatus;
+  selected: boolean;
+  quoteDate: string;
+  responsible: string;
+  notes: string;
+  version: number;
+  active: boolean;
+}
+
+export interface PurchaseRoute {
+  id: string;
+  itemId: string;
+  order: number;
+  originDestination: string;
+  active: boolean;
+  notes: string;
+}
+
+export interface QuotePermissions {
+  view: boolean;
+  create: boolean;
+  edit: boolean;
+  select: boolean;
+  createSupplier: boolean;
+}
+
+export interface QuoteOptions {
+  statuses: Array<Exclude<QuoteStatus, "SELECIONADA" | "DESCARTADA" | "EXPIRADA">>;
+  origins: string[];
+  paymentMethods: string[];
+}
+
+export interface QuotesWorkspace {
+  suppliers: Supplier[];
+  quotes: Quote[];
+  routes: PurchaseRoute[];
+  options: QuoteOptions;
+  permissions: QuotePermissions;
+  checkedAt: string;
+}
+
+export interface CreateSupplierInput {
+  name: string;
+  taxId: string;
+  city: string;
+  state: string;
+  contact: string;
+  phone: string;
+  email: string;
+  rating: number | null;
+  active: boolean;
+  notes: string;
+  website: string;
+}
+
+export interface QuoteValuesInput {
+  supplierId: string;
+  origin: string;
+  unitPrice: number;
+  quantity: number;
+  freight: number;
+  otherCosts: number;
+  paymentMethod: string;
+  leadTimeDays: number;
+  proposalValidUntil: string;
+  link: string;
+  status: Exclude<QuoteStatus, "SELECIONADA" | "DESCARTADA" | "EXPIRADA">;
+  quoteDate: string;
+  notes: string;
+}
+
+export interface CreateQuoteInput extends QuoteValuesInput {
+  necessityId: string;
+}
+
+export interface UpdateQuoteInput {
+  id: string;
+  version: number;
+  changes: QuoteValuesInput;
+  reason?: string;
+}
+
+export interface SelectQuoteInput {
+  id: string;
+  version: number;
+  reason?: string;
+}
+
 export interface SessionUser {
   id: string;
   name: string;

@@ -59,9 +59,9 @@ Execute no editor, nesta ordem:
 1. `testHealthCheck()` — deve retornar JSON com `ok: true` e `status: "ok"`.
 2. `testPostHealthCheck()` — valida o envelope POST público e deve retornar `ok: true`.
 3. `diagnoseSpreadsheet()` — somente leitura; o relatório deve retornar `ready: true`. Em `tables`, cada aba deve ter `ok: true` e `missing: []`.
-4. Se houver colunas técnicas ausentes, defina temporariamente `ALLOW_SETUP=SIM` e execute `setupTechnicalColumns()`. A função cria abas de backup antes de alterar cabeçalhos e apaga `ALLOW_SETUP` ao terminar.
-5. Execute `diagnoseSpreadsheet()` novamente; confirme `ready: true` e todas as listas `missing` vazias.
-6. Confirme que existe um usuário DEV ativo em `09_USUARIOS` com o mesmo e-mail usado no login Google.
+4. Confirme que existe um usuário DEV ativo em `09_USUARIOS` com o mesmo e-mail usado no login Google.
+
+Para esta entrega de Cotações, não execute `setupTechnicalColumns()`: a estrutura DEV já foi preparada e o módulo é compatível com os cabeçalhos existentes.
 
 Depois, atualize a implantação existente em **Implantar → Gerenciar implantações → Editar → Nova versão → Implantar**.
 
@@ -91,5 +91,10 @@ O teste autenticado de `bootstrap` também aceita `GOOGLE_ID_TOKEN` temporário.
 - `POST {"action":"updateNecessity","credential":"<Google ID token>","payload":{...}}`: escrita versionada com permissão, validação de status, `LockService` e auditoria em `12_HISTORICO`.
 - `POST {"action":"updateStore","credential":"<Google ID token>","payload":{...}}`: edição versionada de lojas com escopo, permissão do módulo e auditoria.
 - `POST {"action":"updateItem","credential":"<Google ID token>","payload":{...}}`: edição versionada do catálogo com permissão do módulo e auditoria.
+- `POST {"action":"quotesWorkspace","credential":"<Google ID token>","payload":{}}`: fornecedores, cotações e rotas filtrados pelo escopo, opções reais de `14_LISTAS` e permissões do usuário.
+- `POST {"action":"createSupplier","credential":"<Google ID token>","payload":{...}}`: cadastro de fornecedor nos campos existentes de `04_FORNECEDORES`.
+- `POST {"action":"createQuote","credential":"<Google ID token>","payload":{...}}`: cria uma proposta em `05_COTACOES`, deriva loja/item da necessidade e calcula o total no backend.
+- `POST {"action":"updateQuote","credential":"<Google ID token>","payload":{"id":"COT-000001","version":1,"changes":{...},"reason":"..."}}`: edição integral versionada; IDs e vínculo da necessidade permanecem imutáveis.
+- `POST {"action":"selectQuote","credential":"<Google ID token>","payload":{"id":"COT-000001","version":2,"reason":"..."}}`: seleciona manualmente uma proposta recebida e desmarca a anterior da mesma necessidade.
 
 Todo acesso à planilha usa `SPREADSHEET_ID` via `PropertiesService`. O ID não é hardcoded em `Code.gs`.

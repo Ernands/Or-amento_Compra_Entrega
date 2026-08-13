@@ -185,6 +185,26 @@ export class OfficialSnapshotRepository implements OperationsRepository {
     };
   }
 
+  async getQuotesWorkspace(): Promise<never> {
+    throw new Error("O módulo Cotações exige conexão autenticada com a planilha DEV.");
+  }
+
+  async createSupplier(): Promise<never> {
+    throw new Error("O snapshot local é somente leitura.");
+  }
+
+  async createQuote(): Promise<never> {
+    throw new Error("O snapshot local é somente leitura.");
+  }
+
+  async updateQuote(): Promise<never> {
+    throw new Error("O snapshot local é somente leitura.");
+  }
+
+  async selectQuote(): Promise<never> {
+    throw new Error("O snapshot local é somente leitura.");
+  }
+
   async updateStore(): Promise<never> {
     throw new Error("O snapshot local é somente leitura.");
   }
