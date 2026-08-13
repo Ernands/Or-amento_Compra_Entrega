@@ -22,6 +22,9 @@ assert.match(deployCode, /function doGet\(event\)/, "doGet(event) ausente.");
 assert.match(deployCode, /function doPost\(event\)/, "doPost(event) ausente.");
 assert.match(deployCode, /function updateStore\(/, "updateStore ausente.");
 assert.match(deployCode, /function updateItem\(/, "updateItem ausente.");
+assert.match(deployCode, /case "technicalStatus":/, "A ação technicalStatus não está no dispatch autenticado.");
+assert.match(deployCode, /function buildTechnicalStatus\(/, "buildTechnicalStatus ausente.");
+assert.match(deployCode, /function inspectTechnicalTable\(/, "Inspeção técnica leve ausente.");
 assert.match(deployCode, /function assertModulePermission\(/, "Validação central de permissões ausente.");
 assert.match(deployCode, /getProperty\("SPREADSHEET_ID"\)/, "SPREADSHEET_ID não usa PropertiesService.");
 assert.match(deployCode, /getProperty\("GOOGLE_CLIENT_ID"\)/, "GOOGLE_CLIENT_ID não usa PropertiesService.");
@@ -70,6 +73,41 @@ assert.equal(postHealth.ok, true);
 assert.equal(postHealth.data.status, "ok");
 assert.equal(postHealth.requestId, "local-request-id");
 
+const technicalHeaders = ["created_at", "created_by", "updated_at", "updated_by", "version", "ativo"];
+const setupTables = [
+  ["01_LOJAS", "ID_Loja"],
+  ["02_ITENS", "ID_Item"],
+  ["03_NECESSIDADES", "ID_Necessidade"],
+  ["04_FORNECEDORES", "ID_Fornecedor"],
+  ["05_COTACOES", "ID_Cotação"],
+  ["06_APROVACOES", "ID_Aprovação"],
+  ["07_COMPRAS", "ID_Compra"],
+  ["08_ENTREGAS", "ID_Entrega"],
+  ["09_USUARIOS", "ID_Usuário"],
+  ["11_SOLIC_ACESSO", "ID_Solicitação"],
+  ["13_IMPORTACAO", "Tipo_Registro"],
+  ["15_ROTAS_COMPRA", "ID_Rota"],
+];
+let maximumRowsRead = 0;
+const fakeSheets = Object.fromEntries(setupTables.map(([sheetName, keyHeader]) => [sheetName, {
+  getLastColumn: () => technicalHeaders.length + 1,
+  getLastRow: () => 2500,
+  getRange: (row, column, rowCount, columnCount) => {
+    assert.equal(row, 1);
+    assert.equal(column, 1);
+    assert.equal(columnCount, technicalHeaders.length + 1);
+    maximumRowsRead = Math.max(maximumRowsRead, rowCount);
+    const values = Array.from({ length: rowCount }, () => Array(columnCount).fill(""));
+    values[3] = [keyHeader, ...technicalHeaders];
+    return { getValues: () => values };
+  },
+}]));
+const technicalStatus = sandbox.buildTechnicalStatus({ getSheetByName: (name) => fakeSheets[name] || null });
+assert.equal(technicalStatus.ready, true);
+assert.equal(technicalStatus.tables.length, 12);
+assert.equal(technicalStatus.tables.every((table) => table.headerRow === 4 && table.missing.length === 0), true);
+assert.equal(maximumRowsRead, 10, "O diagnóstico técnico deve limitar a leitura às primeiras 10 linhas.");
+
 console.log("✓ Code.gs corresponde ao JavaScript compilado");
 console.log("✓ Manifesto de implantação sincronizado");
 console.log("✓ urlFetchWhitelist limitada a https://oauth2.googleapis.com/tokeninfo");
@@ -77,3 +115,4 @@ console.log("✓ SPREADSHEET_ID e GOOGLE_CLIENT_ID usam PropertiesService");
 console.log("✓ ID da planilha DEV não está hardcoded em Code.gs");
 console.log("✓ doGet health e doPost health responderam corretamente");
 console.log("✓ updateStore e updateItem compilados com permissão centralizada");
+console.log("✓ technicalStatus autenticado verifica 12 abas lendo no máximo 10 linhas por aba");

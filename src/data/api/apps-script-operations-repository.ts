@@ -1,6 +1,6 @@
 import { AppsScriptClient } from "@/data/api/apps-script-client";
 import type { OperationsRepository } from "@/data/repositories/operations-repository";
-import type { DataSourceInfo, Item, Necessity, SessionUser, Store, UpdateItemInput, UpdateStoreInput } from "@/domain/entities";
+import type { DataSourceInfo, Item, Necessity, SessionUser, Store, TechnicalStatus, UpdateItemInput, UpdateStoreInput } from "@/domain/entities";
 
 export interface BootstrapPayload {
   source: DataSourceInfo;
@@ -34,6 +34,10 @@ export class AppsScriptOperationsRepository implements OperationsRepository {
 
   async listNecessities() {
     return (await this.getBootstrap()).necessities;
+  }
+
+  getTechnicalStatus() {
+    return this.client.call<TechnicalStatus>("technicalStatus");
   }
 
   updateStore(input: UpdateStoreInput) {

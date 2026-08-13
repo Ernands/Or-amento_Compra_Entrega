@@ -11,7 +11,7 @@ O primeiro fluxo executável está pronto:
 - necessidades com paginação em 100, 250 ou 500 registros e opção para exibir as 2.295 relações de uma vez;
 - planilha DEV nativa validada e snapshot verificado para desenvolvimento seguro;
 - login Google Identity Services para produção;
-- Google Apps Script Web App com `bootstrap` em lote e escrita versionada de lojas, itens e necessidades;
+- Google Apps Script Web App com `bootstrap` em lote, diagnóstico técnico autenticado e escrita versionada de lojas, itens e necessidades;
 - permissões por perfil e escopo de loja no backend;
 - auditoria, máquina de estados e `LockService`;
 - CI e publicação automática no GitHub Pages.
@@ -54,7 +54,7 @@ O Client ID não é segredo. Nunca coloque Client Secret no frontend; este fluxo
 1. Use somente a [planilha DEV nativa](https://docs.google.com/spreadsheets/d/1oU1ytbche1s1V4J6kF_xXdWgV-WdGU2xG8t79qQf62c/edit) nos testes.
 2. Preserve o XLSX de origem sem alterações.
 3. Configure `SPREADSHEET_ID=1oU1ytbche1s1V4J6kF_xXdWgV-WdGU2xG8t79qQf62c` nas propriedades do Apps Script DEV.
-4. Revise o relatório em [docs/PLANILHA.md](docs/PLANILHA.md) e execute `diagnoseSpreadsheet()`.
+4. Revise o relatório em [docs/PLANILHA.md](docs/PLANILHA.md) e execute `diagnoseSpreadsheet()`; após a publicação, a tela Diagnóstico usa a ação autenticada `technicalStatus`.
 5. Prepare as colunas técnicas com backup e cadastre pelo menos um usuário ativo em `09_USUARIOS`.
 
 ## Publicar o Apps Script

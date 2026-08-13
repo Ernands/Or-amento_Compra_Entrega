@@ -58,9 +58,9 @@ Execute no editor, nesta ordem:
 
 1. `testHealthCheck()` — deve retornar JSON com `ok: true` e `status: "ok"`.
 2. `testPostHealthCheck()` — valida o envelope POST público e deve retornar `ok: true`.
-3. `diagnoseSpreadsheet()` — somente leitura; todas as abas devem retornar `ok: true`. A lista `missing` informa as colunas técnicas ainda ausentes.
+3. `diagnoseSpreadsheet()` — somente leitura; o relatório deve retornar `ready: true`. Em `tables`, cada aba deve ter `ok: true` e `missing: []`.
 4. Se houver colunas técnicas ausentes, defina temporariamente `ALLOW_SETUP=SIM` e execute `setupTechnicalColumns()`. A função cria abas de backup antes de alterar cabeçalhos e apaga `ALLOW_SETUP` ao terminar.
-5. Execute `diagnoseSpreadsheet()` novamente; todas as listas `missing` devem ficar vazias.
+5. Execute `diagnoseSpreadsheet()` novamente; confirme `ready: true` e todas as listas `missing` vazias.
 6. Confirme que existe um usuário DEV ativo em `09_USUARIOS` com o mesmo e-mail usado no login Google.
 
 Depois, atualize a implantação existente em **Implantar → Gerenciar implantações → Editar → Nova versão → Implantar**.
@@ -87,6 +87,7 @@ O teste autenticado de `bootstrap` também aceita `GOOGLE_ID_TOKEN` temporário.
 - `GET ?action=health`: health check público.
 - `POST {"action":"health"}`: health check público.
 - `POST {"action":"bootstrap","credential":"<Google ID token>","payload":{}}`: sessão, lojas, itens e necessidades filtradas pelo escopo do usuário.
+- `POST {"action":"technicalStatus","credential":"<Google ID token>","payload":{}}`: diagnóstico somente leitura das 12 abas; lê no máximo as 10 primeiras linhas de cada aba para localizar cabeçalhos e verificar colunas técnicas.
 - `POST {"action":"updateNecessity","credential":"<Google ID token>","payload":{...}}`: escrita versionada com permissão, validação de status, `LockService` e auditoria em `12_HISTORICO`.
 - `POST {"action":"updateStore","credential":"<Google ID token>","payload":{...}}`: edição versionada de lojas com escopo, permissão do módulo e auditoria.
 - `POST {"action":"updateItem","credential":"<Google ID token>","payload":{...}}`: edição versionada do catálogo com permissão do módulo e auditoria.

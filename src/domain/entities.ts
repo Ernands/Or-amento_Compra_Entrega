@@ -127,8 +127,22 @@ export interface DataSourceInfo {
   status: "connected" | "snapshot" | "error";
   readOnly: boolean;
   spreadsheetId: string;
-  modifiedAt: string;
+  checkedAt: string;
   message: string;
+}
+
+export interface TechnicalTableStatus {
+  sheet: string;
+  ok: boolean;
+  headerRow: number | null;
+  missing: string[];
+  error?: string;
+}
+
+export interface TechnicalStatus {
+  ready: boolean;
+  checkedAt: string;
+  tables: TechnicalTableStatus[];
 }
 
 export interface SessionUser {

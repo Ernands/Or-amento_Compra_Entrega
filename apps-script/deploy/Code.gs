@@ -32,6 +32,7 @@ const APP_CONFIG = {
         { sheet: "15_ROTAS_COMPRA", keyHeader: "ID_Rota" },
     ],
 };
+const TECHNICAL_HEADER_PREVIEW_ROWS = 10;
 function doGet(event) {
     var _a;
     const action = ((_a = event === null || event === void 0 ? void 0 : event.parameter) === null || _a === void 0 ? void 0 : _a.action) || "health";
@@ -66,6 +67,8 @@ function dispatchAction(action, payload, spreadsheet, user) {
     switch (action) {
         case "bootstrap":
             return buildBootstrap(spreadsheet, user);
+        case "technicalStatus":
+            return buildTechnicalStatus(spreadsheet);
         case "updateNecessity":
             return updateNecessity(spreadsheet, user, payload);
         case "updateStore":
@@ -95,7 +98,7 @@ function buildBootstrap(spreadsheet, user) {
             status: "connected",
             readOnly: false,
             spreadsheetId: spreadsheet.getId(),
-            modifiedAt: new Date().toISOString(),
+            checkedAt: new Date().toISOString(),
             message: "Dados ao vivo pelo Google Apps Script Web App, com autenticação e permissões validadas no backend.",
         },
         user,
@@ -452,18 +455,42 @@ function normalizePriority(value) { const key = normalizeHeader(value); const al
 function normalizeProfile(value) { const key = normalizeHeader(value); const aliases = { administrador: "ADMINISTRADOR", gestoraprovador: "GESTOR", gestor: "GESTOR", compras: "COMPRAS", responsavelloja: "RESPONSAVEL_LOJA", consulta: "CONSULTA" }; return aliases[key] || "CONSULTA"; }
 function assertStatusTransition(previous, next) { const from = normalizeStatus(previous); const to = normalizeStatus(next); if ((STATUS_TRANSITIONS[from] || []).indexOf(to) < 0)
     throw new ApiException("INVALID_STATUS_TRANSITION", `Transição inválida: ${from} → ${to}`); }
+function buildTechnicalStatus(spreadsheet) {
+    const tables = APP_CONFIG.setupTables.map(({ sheet, keyHeader }) => inspectTechnicalTable(spreadsheet, sheet, keyHeader));
+    return {
+        ready: tables.every((table) => table.ok && table.missing.length === 0),
+        checkedAt: new Date().toISOString(),
+        tables,
+    };
+}
+function inspectTechnicalTable(spreadsheet, sheetName, keyHeader) {
+    const sheet = spreadsheet.getSheetByName(sheetName);
+    if (!sheet) {
+        return { sheet: sheetName, ok: false, headerRow: null, missing: APP_CONFIG.technicalHeaders.slice(), error: "Aba não encontrada." };
+    }
+    const lastColumn = sheet.getLastColumn();
+    if (lastColumn < 1) {
+        return { sheet: sheetName, ok: false, headerRow: null, missing: APP_CONFIG.technicalHeaders.slice(), error: "Aba vazia." };
+    }
+    const previewRowCount = Math.min(Math.max(sheet.getLastRow(), 1), TECHNICAL_HEADER_PREVIEW_ROWS);
+    const preview = sheet.getRange(1, 1, previewRowCount, lastColumn).getValues();
+    const normalizedKeyHeader = normalizeHeader(keyHeader);
+    const headerOffset = preview.findIndex((row) => row.some((value) => normalizeHeader(value) === normalizedKeyHeader));
+    if (headerOffset < 0) {
+        return {
+            sheet: sheetName,
+            ok: false,
+            headerRow: null,
+            missing: APP_CONFIG.technicalHeaders.slice(),
+            error: `Cabeçalho ${keyHeader} não localizado nas primeiras ${previewRowCount} linhas.`,
+        };
+    }
+    const normalizedHeaders = preview[headerOffset].map(normalizeHeader);
+    const missing = APP_CONFIG.technicalHeaders.filter((header) => normalizedHeaders.indexOf(normalizeHeader(header)) < 0);
+    return { sheet: sheetName, ok: true, headerRow: headerOffset + 1, missing };
+}
 function diagnoseSpreadsheet() {
-    const spreadsheet = openConfiguredSpreadsheet();
-    return APP_CONFIG.setupTables.map(({ sheet: sheetName, keyHeader }) => {
-        try {
-            const table = readTable(spreadsheet, sheetName, [keyHeader]);
-            const missing = APP_CONFIG.technicalHeaders.filter((header) => table.normalizedHeaders.indexOf(normalizeHeader(header)) < 0);
-            return { sheet: sheetName, ok: true, headerRow: table.headerRow, missing };
-        }
-        catch (error) {
-            return { sheet: sheetName, ok: false, error: toSafeError(error).message };
-        }
-    });
+    return buildTechnicalStatus(openConfiguredSpreadsheet());
 }
 function testHealthCheck() {
     const response = doGet({ parameter: { action: "health" } }).getContent();

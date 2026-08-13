@@ -65,4 +65,4 @@ Os cabeçalhos das tabelas estruturadas estão na linha 4. O backend foi alinhad
 4. A aba `09_USUARIOS` ainda precisa de pelo menos um usuário DEV ativo.
 5. O Web App e o Client ID OAuth precisam ser configurados antes dos testes autenticados.
 
-O Apps Script inclui `diagnoseSpreadsheet()` (somente leitura) e `setupTechnicalColumns()`. A preparação exige `ALLOW_SETUP=SIM`, localiza a linha real de cabeçalhos, cria uma cópia de segurança de cada aba afetada e remove a autorização temporária ao terminar.
+O Apps Script inclui `diagnoseSpreadsheet()` para execução manual e a ação autenticada `technicalStatus` usada pela tela Diagnóstico. Ambas são somente leitura e examinam no máximo as 10 primeiras linhas de cada aba para localizar o cabeçalho e verificar as colunas técnicas. `setupTechnicalColumns()` permanece exclusivamente manual: exige `ALLOW_SETUP=SIM`, localiza a linha real de cabeçalhos, cria uma cópia de segurança de cada aba afetada e remove a autorização temporária ao terminar.

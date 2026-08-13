@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useState } from "rea
 import { useAuth } from "@/auth/auth-context";
 import type { BootstrapPayload } from "@/data/api/apps-script-operations-repository";
 import { createOperationsRepository } from "@/data/repositories/create-operations-repository";
-import type { DataSourceInfo, Item, Necessity, Store, UpdateItemInput, UpdateStoreInput } from "@/domain/entities";
+import type { DataSourceInfo, Item, Necessity, Store, TechnicalStatus, UpdateItemInput, UpdateStoreInput } from "@/domain/entities";
 import { OperationsService, buildDashboard } from "@/services/operations-service";
 
 type Dashboard = ReturnType<typeof buildDashboard>;
@@ -17,6 +17,7 @@ interface OperationsState {
   necessities: Necessity[];
   dashboard: Dashboard | null;
   refresh: () => void;
+  getTechnicalStatus: () => Promise<TechnicalStatus>;
   updateStore: (input: UpdateStoreInput) => Promise<void>;
   updateItem: (input: UpdateItemInput) => Promise<void>;
 }
@@ -26,7 +27,7 @@ const OperationsContext = createContext<OperationsState | null>(null);
 export function OperationsProvider({ children }: { children: React.ReactNode }) {
   const { bootstrap, bootstrapError, bootstrapLoading, credential, developmentMode, refreshBootstrap } = useAuth();
   const [refreshKey, setRefreshKey] = useState(0);
-  const [state, setState] = useState<Omit<OperationsState, "refresh" | "updateStore" | "updateItem">>({
+  const [state, setState] = useState<Omit<OperationsState, "refresh" | "getTechnicalStatus" | "updateStore" | "updateItem">>({
     loading: Boolean(credential), error: "", source: null, stores: [], items: [], necessities: [], dashboard: null,
   });
 
@@ -51,6 +52,10 @@ export function OperationsProvider({ children }: { children: React.ReactNode }) 
     if (developmentMode) setRefreshKey((key) => key + 1);
     else void refreshBootstrap();
   }, [developmentMode, refreshBootstrap]);
+  const getTechnicalStatus = useCallback(async () => {
+    if (!credential) throw new Error("Sessão não encontrada.");
+    return createOperationsRepository(credential).getTechnicalStatus();
+  }, [credential]);
   const updateStore = useCallback(async (input: UpdateStoreInput) => {
     if (!credential) throw new Error("Sessão não encontrada.");
     await createOperationsRepository(credential).updateStore(input);
@@ -64,7 +69,7 @@ export function OperationsProvider({ children }: { children: React.ReactNode }) 
   const resolvedState = bootstrap
     ? { ...stateFromBootstrap(bootstrap), loading: bootstrapLoading, error: bootstrapError }
     : state;
-  return <OperationsContext.Provider value={{ ...resolvedState, refresh, updateStore, updateItem }}>{children}</OperationsContext.Provider>;
+  return <OperationsContext.Provider value={{ ...resolvedState, refresh, getTechnicalStatus, updateStore, updateItem }}>{children}</OperationsContext.Provider>;
 }
 
 export function useOperations() {
@@ -73,7 +78,7 @@ export function useOperations() {
   return context;
 }
 
-function stateFromBootstrap(bootstrap: BootstrapPayload): Omit<OperationsState, "refresh" | "updateStore" | "updateItem"> {
+function stateFromBootstrap(bootstrap: BootstrapPayload): Omit<OperationsState, "refresh" | "getTechnicalStatus" | "updateStore" | "updateItem"> {
   const { source, stores, items, necessities } = bootstrap;
   return {
     loading: false,

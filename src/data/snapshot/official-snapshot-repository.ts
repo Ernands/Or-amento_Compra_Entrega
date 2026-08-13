@@ -159,7 +159,7 @@ export class OfficialSnapshotRepository implements OperationsRepository {
       status: "snapshot" as const,
       readOnly: true,
       spreadsheetId: DEV_SPREADSHEET_ID,
-      modifiedAt: "2026-08-12T19:43:19.445Z",
+      checkedAt: "2026-08-12T19:43:19.445Z",
       message:
         "Os dados exibidos correspondem ao snapshot validado da planilha DEV nativa. Publique e configure o Apps Script Web App DEV para habilitar autenticação e sincronização ao vivo.",
     };
@@ -175,6 +175,14 @@ export class OfficialSnapshotRepository implements OperationsRepository {
 
   async listNecessities() {
     return necessities.map((necessity) => ({ ...necessity }));
+  }
+
+  async getTechnicalStatus() {
+    return {
+      ready: false,
+      checkedAt: new Date().toISOString(),
+      tables: [],
+    };
   }
 
   async updateStore(): Promise<never> {

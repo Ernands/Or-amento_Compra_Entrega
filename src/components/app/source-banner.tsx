@@ -12,7 +12,8 @@ export function SourceBanner({ source }: { source: DataSourceInfo }) {
       <Icon className={connected ? "text-emerald-700" : "text-amber-700"} />
       <AlertTitle>{connected ? "Sincronização ao vivo ativa" : "Modo de leitura segura"}</AlertTitle>
       <AlertDescription className="mt-1 max-w-5xl text-xs leading-relaxed sm:text-sm">
-        {source.message} Última versão verificada em {dateFormatter.format(new Date(source.modifiedAt))}.
+        {source.message}
+        {source.checkedAt ? ` ${connected ? "Conexão conferida" : "Snapshot conferido"} em ${dateFormatter.format(new Date(source.checkedAt))}.` : null}
       </AlertDescription>
     </Alert>
   );

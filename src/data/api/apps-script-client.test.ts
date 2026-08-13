@@ -47,6 +47,16 @@ describe("AppsScriptClient", () => {
 
     expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({ action: "updateItem", credential: "TOKEN", payload });
   });
+
+  it("solicita o diagnóstico técnico autenticado sem payload de escrita", async () => {
+    const fetchMock = successfulFetch({ ready: true, checkedAt: "2026-08-13T12:00:00.000Z", tables: [] });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new AppsScriptClient("https://script.google.com/macros/s/DEV/exec", "TOKEN");
+
+    await client.call("technicalStatus");
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({ action: "technicalStatus", credential: "TOKEN", payload: {} });
+  });
 });
 
 function successfulFetch(data: unknown) {
