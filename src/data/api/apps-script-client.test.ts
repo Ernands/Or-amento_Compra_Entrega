@@ -16,10 +16,11 @@ describe("AppsScriptClient", () => {
 
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://script.google.com/macros/s/DEV/exec",
+      expect.stringMatching(/^https:\/\/script\.google\.com\/macros\/s\/DEV\/exec\?requestId=\d+-\d+$/),
       expect.objectContaining({
         method: "POST",
         redirect: "follow",
+        cache: "no-store",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
         body: JSON.stringify({ action: "bootstrap", credential: "GOOGLE_ID_TOKEN", payload: {} }),
       }),
@@ -72,6 +73,30 @@ describe("AppsScriptClient", () => {
     await client.call(action, payload);
 
     expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({ action, credential: "TOKEN", payload });
+  });
+
+  it("não repete automaticamente uma escrita quando o redirecionamento retorna 404", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("Not found", { status: 404 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new AppsScriptClient("https://script.google.com/macros/s/DEV/exec", "TOKEN");
+
+    await expect(client.call("createQuote", { necessityId: "NEC-000769" })).rejects.toMatchObject({
+      code: "HTTP_404",
+      message: expect.stringContaining("Atualize os dados antes de tentar novamente"),
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("preserva links de proposta com parâmetros extensos no JSON da cotação", async () => {
+    const fetchMock = successfulFetch({ quote: { id: "COT-000001" } });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new AppsScriptClient("https://script.google.com/macros/s/DEV/exec", "TOKEN");
+    const link = "https://www.amazon.com.br/?tag=teste-20&ref=pd_sl_7rwd1q78df_e&adgrpid=155790195778&hvadid=677606588104&hvrand=7280972068615270532&hvlocphy=9213505";
+
+    await client.call("createQuote", { necessityId: "NEC-000769", link });
+
+    const request = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(request.payload.link).toBe(link);
   });
 });
 

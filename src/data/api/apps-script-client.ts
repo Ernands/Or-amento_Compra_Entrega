@@ -30,14 +30,21 @@ export class AppsScriptClient {
   ) {}
 
   async call<T>(action: string, payload: object = {}): Promise<T> {
-    const response = await fetch(this.endpoint, {
+    const response = await fetch(buildRequestUrl(this.endpoint), {
       method: "POST",
       redirect: "follow",
+      cache: "no-store",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify({ action, credential: this.credential, payload }),
     });
 
     if (!response.ok) {
+      if (response.status === 404) {
+        throw new AppsScriptApiError(
+          "HTTP_404",
+          "A implantação do Apps Script não foi encontrada ou o redirecionamento expirou. Atualize os dados antes de tentar novamente para evitar uma cotação duplicada.",
+        );
+      }
       throw new AppsScriptApiError("HTTP_ERROR", `O backend respondeu com HTTP ${response.status}.`);
     }
 
@@ -58,4 +65,13 @@ export class AppsScriptClient {
     }
     return envelope.data;
   }
+}
+
+let requestSequence = 0;
+
+function buildRequestUrl(endpoint: string): string {
+  const url = new URL(endpoint);
+  requestSequence += 1;
+  url.searchParams.set("requestId", `${Date.now()}-${requestSequence}`);
+  return url.toString();
 }
