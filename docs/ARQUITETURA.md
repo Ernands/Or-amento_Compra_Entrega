@@ -6,9 +6,11 @@ GitHub Repository
 GitHub Actions (lint, TypeScript, testes e build)
       ↓
 GitHub Pages (SPA React/TypeScript)
-      ↓ HTTPS + Google ID token
+      ↓ HTTPS
 Google Apps Script Web App
-      ↓ autenticação + permissão + workflow + lock + auditoria
+      ├─ ações públicas somente leitura, sem Google
+      └─ ações autenticadas + permissão + workflow + lock + auditoria
+      ↓
 Google Sheets nativo
 ```
 
@@ -30,6 +32,9 @@ Google Sheets nativo
 - O e-mail precisa estar ativo em `09_USUARIOS`; o escopo de lojas é aplicado no backend.
 - Toda escrita confere permissão, status e `version`, usa `LockService` e registra `12_HISTORICO`.
 - O Web App deve executar como o proprietário e aceitar requisições externas; acesso à planilha continua condicionado ao token validado pela aplicação.
+- O visitante usa somente `publicBootstrap` e `publicQuotesWorkspace`, separadas do dispatch autenticado por uma lista branca exata.
+- `PUBLIC_READ_ACCESS=SIM` é uma chave de desligamento do acesso público; removê-la ou alterar seu valor desabilita o visitante.
+- DTOs públicos não incluem contatos, documentos, links de proposta, observações, IDs reais de fornecedores/cotações, autoria, versão ou auditoria.
 
 ## Concorrência e atomicidade possível
 

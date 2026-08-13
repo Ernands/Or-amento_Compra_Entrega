@@ -2,13 +2,16 @@ import { AppsScriptClient } from "@/data/api/apps-script-client";
 import type { OperationsRepository } from "@/data/repositories/operations-repository";
 import type { CreateQuoteInput, CreateSupplierInput, DataSourceInfo, DeleteQuoteInput, Item, Necessity, Quote, QuotesWorkspace, SelectQuoteInput, SessionUser, Store, Supplier, TechnicalStatus, UpdateItemInput, UpdateQuoteInput, UpdateStoreInput } from "@/domain/entities";
 
-export interface BootstrapPayload {
+export interface ViewBootstrapPayload {
   source: DataSourceInfo;
-  user: SessionUser;
   stores: Store[];
   items: Item[];
   necessities: Necessity[];
   activeQuoteNecessityIds?: string[];
+}
+
+export interface BootstrapPayload extends ViewBootstrapPayload {
+  user: SessionUser;
 }
 
 export class AppsScriptOperationsRepository implements OperationsRepository {

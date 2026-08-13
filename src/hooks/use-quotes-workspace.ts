@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useAuth } from "@/auth/auth-context";
-import { createOperationsRepository } from "@/data/repositories/create-operations-repository";
+import { createOperationsRepository, createPublicOperationsRepository } from "@/data/repositories/create-operations-repository";
 import type { CreateQuoteInput, CreateSupplierInput, DeleteQuoteInput, QuotesWorkspace, SelectQuoteInput, UpdateQuoteInput } from "@/domain/entities";
 
 type WorkspaceState =
@@ -10,8 +10,8 @@ type WorkspaceState =
   | { status: "error"; message: string };
 
 export function useQuotesWorkspace() {
-  const { bootstrap, credential, refreshBootstrap } = useAuth();
-  const repository = useMemo(() => credential ? createOperationsRepository(credential) : null, [credential]);
+  const { accessMode, bootstrap, credential, refreshBootstrap } = useAuth();
+  const repository = useMemo(() => accessMode === "visitor" ? createPublicOperationsRepository() : credential ? createOperationsRepository(credential) : null, [accessMode, credential]);
   const [reloadKey, setReloadKey] = useState(0);
   const [state, setState] = useState<WorkspaceState>({ status: "loading" });
 

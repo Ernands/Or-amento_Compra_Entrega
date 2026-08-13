@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { AppsScriptClient } from "./apps-script-client";
+import { AppsScriptClient, PublicAppsScriptClient } from "./apps-script-client";
 
 describe("AppsScriptClient", () => {
   afterEach(() => {
@@ -25,6 +25,18 @@ describe("AppsScriptClient", () => {
         body: JSON.stringify({ action: "bootstrap", credential: "GOOGLE_ID_TOKEN", payload: {} }),
       }),
     );
+  });
+
+  it("envia ações públicas sem Google ID token", async () => {
+    const fetchMock = successfulFetch({ stores: [], items: [], necessities: [], activeQuoteNecessityIds: [] });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new PublicAppsScriptClient("https://script.google.com/macros/s/DEV/exec");
+    await client.call("publicBootstrap");
+
+    const request = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(request).toEqual({ action: "publicBootstrap", payload: {} });
+    expect(request).not.toHaveProperty("credential");
   });
 
   it("envia versão e alterações ao editar uma loja", async () => {

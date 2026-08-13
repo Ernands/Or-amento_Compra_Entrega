@@ -138,10 +138,17 @@ function doPost(event: PostEvent): GoogleAppsScript.Content.TextOutput {
     if (request.action === "health") {
       return jsonOutput({ ok: true, data: healthPayload(), requestId });
     }
-    const claims = verifyGoogleCredential(requireString(request.credential, "credential"));
+    const action = request.action || "";
+    if (isPublicReadAction(action)) {
+      assertPublicReadAccessEnabled();
+      const spreadsheet = openConfiguredSpreadsheet();
+      const data = dispatchPublicReadAction(action, spreadsheet);
+      return jsonOutput({ ok: true, data, requestId });
+    }
+    const claims = verifyGoogleCredential(requireGoogleCredential(request.credential));
     const spreadsheet = openConfiguredSpreadsheet();
     const user = findAuthorizedUser(spreadsheet, claims);
-    const data = dispatchAction(request.action || "", request.payload || {}, spreadsheet, user);
+    const data = dispatchAuthenticatedAction(action, request.payload || {}, spreadsheet, user);
     return jsonOutput({ ok: true, data, requestId });
   } catch (error) {
     const safe = toSafeError(error);
@@ -154,7 +161,22 @@ function healthPayload(): { status: string; service: string; timestamp: string }
   return { status: "ok", service: "Implanta 27 Apps Script API", timestamp: new Date().toISOString() };
 }
 
-function dispatchAction(action: string, payload: Record<string, unknown>, spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet, user: SystemUser): unknown {
+function isPublicReadAction(action: string): boolean {
+  return ["publicBootstrap", "publicQuotesWorkspace"].indexOf(action) >= 0;
+}
+
+function dispatchPublicReadAction(action: string, spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet): unknown {
+  switch (action) {
+    case "publicBootstrap":
+      return buildPublicBootstrap(spreadsheet);
+    case "publicQuotesWorkspace":
+      return buildPublicQuotesWorkspace(spreadsheet);
+    default:
+      throw new ApiException("UNKNOWN_PUBLIC_ACTION", "Ação pública não foi reconhecida.");
+  }
+}
+
+function dispatchAuthenticatedAction(action: string, payload: Record<string, unknown>, spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet, user: SystemUser): unknown {
   switch (action) {
     case "bootstrap":
       return buildBootstrap(spreadsheet, user);
@@ -181,6 +203,77 @@ function dispatchAction(action: string, payload: Record<string, unknown>, spread
     default:
       throw new ApiException("UNKNOWN_ACTION", "Ação não reconhecida.");
   }
+}
+
+function buildPublicBootstrap(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet): unknown {
+  const storesTable = readTable(spreadsheet, APP_CONFIG.sheets.stores, ["ID_Loja", "Loja", "Status"]);
+  const itemsTable = readTable(spreadsheet, APP_CONFIG.sheets.items, ["ID_Item", "Código_Original", "Item", "Status_Especificação"]);
+  const necessitiesTable = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "ID_Loja", "ID_Item", "Qtd_Planejada", "Status"]);
+  const quotesTable = readTable(spreadsheet, APP_CONFIG.sheets.quotes, ["ID_Cotação", "ID_Necessidade", "ativo"]);
+  const necessities = necessitiesTable.rows.map((row) => ({
+    id: cell(necessitiesTable, row, "ID_Necessidade"),
+    storeId: cell(necessitiesTable, row, "ID_Loja"),
+    itemId: cell(necessitiesTable, row, "ID_Item"),
+    quantity: Number(cell(necessitiesTable, row, "Qtd_Planejada") || 1),
+    priority: normalizePriority(cell(necessitiesTable, row, "Prioridade")),
+    status: normalizeStatus(cell(necessitiesTable, row, "Status")),
+  }));
+  const activeQuoteNecessityIds = Object.keys(Object.fromEntries(quotesTable.rows
+    .filter((row) => isActiveQuoteRow(quotesTable, row))
+    .map((row) => [cell(quotesTable, row, "ID_Necessidade"), true]))).filter(Boolean);
+  return {
+    source: {
+      kind: "public",
+      status: "connected",
+      readOnly: true,
+      checkedAt: new Date().toISOString(),
+      message: "Modo visitante com dados operacionais ao vivo e acesso estritamente somente leitura.",
+    },
+    stores: storesTable.rows.map((row) => ({
+      id: cell(storesTable, row, "ID_Loja"),
+      name: cell(storesTable, row, "Loja") || cell(storesTable, row, "Nome"),
+      city: cell(storesTable, row, "Cidade"),
+      state: cell(storesTable, row, "UF"),
+      status: cell(storesTable, row, "Status"),
+    })),
+    items: itemsTable.rows.map((row) => ({
+      id: cell(itemsTable, row, "ID_Item"),
+      operationalCode: cell(itemsTable, row, "Código_Original"),
+      group: cell(itemsTable, row, "Grupo"),
+      area: cell(itemsTable, row, "Área"),
+      name: cell(itemsTable, row, "Item"),
+      definitionStatus: normalizeText(cell(itemsTable, row, "Status_Especificação")).indexOf("pendente") >= 0 ? "PENDENTE_DEFINICAO" : "LIBERADO_PARA_COTACAO",
+      duplicateOperationalCode: isYes(cell(itemsTable, row, "Código_Duplicado")),
+    })),
+    necessities,
+    activeQuoteNecessityIds,
+  };
+}
+
+function buildPublicQuotesWorkspace(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet): unknown {
+  const quotesTable = readTable(spreadsheet, APP_CONFIG.sheets.quotes, ["ID_Cotação", "ID_Necessidade", "ID_Loja", "ID_Item", "ID_Fornecedor", "Quantidade", "Valor_Total", "Prazo_Dias", "Status", "ativo"]);
+  const activeRows = quotesTable.rows
+    .filter((row) => isActiveQuoteRow(quotesTable, row))
+    .slice()
+    .sort((left, right) => cell(quotesTable, left, "ID_Cotação").localeCompare(cell(quotesTable, right, "ID_Cotação")));
+  const supplierIds = Array.from(new Set(activeRows.map((row) => cell(quotesTable, row, "ID_Fornecedor")).filter(Boolean))).sort();
+  const publicSupplierIds = Object.fromEntries(supplierIds.map((id, index) => [id, `PUB-FOR-${String(index + 1).padStart(3, "0")}`]));
+  return {
+    suppliers: supplierIds.map((id, index) => ({ id: publicSupplierIds[id], name: `Fornecedor ${String(index + 1).padStart(2, "0")}` })),
+    quotes: activeRows.map((row, index) => ({
+      id: `PUB-COT-${String(index + 1).padStart(6, "0")}`,
+      necessityId: cell(quotesTable, row, "ID_Necessidade"),
+      storeId: cell(quotesTable, row, "ID_Loja"),
+      itemId: cell(quotesTable, row, "ID_Item"),
+      supplierId: publicSupplierIds[cell(quotesTable, row, "ID_Fornecedor")],
+      quantity: Number(cell(quotesTable, row, "Quantidade") || 0),
+      total: Number(cell(quotesTable, row, "Valor_Total") || 0),
+      leadTimeDays: Number(cell(quotesTable, row, "Prazo_Dias") || 0),
+      status: normalizeQuoteStatus(cell(quotesTable, row, "Status")),
+      selected: isYes(cell(quotesTable, row, "Selecionada")),
+    })),
+    checkedAt: new Date().toISOString(),
+  };
 }
 
 function buildBootstrap(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet, user: SystemUser): unknown {
@@ -1061,6 +1154,12 @@ function openConfiguredSpreadsheet(): GoogleAppsScript.Spreadsheet.Spreadsheet {
   try { return SpreadsheetApp.openById(id); } catch { throw new ApiException("SPREADSHEET_UNAVAILABLE", "Não foi possível abrir a planilha. Confirme o ID e o formato Google Sheets nativo."); }
 }
 
+function assertPublicReadAccessEnabled(): void {
+  if (PropertiesService.getScriptProperties().getProperty("PUBLIC_READ_ACCESS") !== "SIM") {
+    throw new ApiException("PUBLIC_ACCESS_DISABLED", "O acesso de visitante está temporariamente indisponível.");
+  }
+}
+
 function jsonOutput(payload: unknown): GoogleAppsScript.Content.TextOutput {
   return ContentService.createTextOutput(JSON.stringify(payload)).setMimeType(ContentService.MimeType.JSON);
 }
@@ -1079,6 +1178,7 @@ function setCell(table: SheetTable, row: unknown[], header: string, value: unkno
 function isYes(value: string): boolean { return ["sim", "true", "1", "ativo"].indexOf(normalizeText(value)) >= 0; }
 function isRecord(value: unknown): value is Record<string, unknown> { return Boolean(value) && typeof value === "object" && !Array.isArray(value); }
 function requireString(value: unknown, field: string): string { if (typeof value !== "string" || !value.trim()) throw new ApiException("VALIDATION_ERROR", `Campo obrigatório: ${field}`); return value.trim(); }
+function requireGoogleCredential(value: unknown): string { if (typeof value !== "string" || !value.trim()) throw new ApiException("AUTH_REQUIRED", "Entre com Google para realizar alterações."); return value.trim(); }
 function requirePositiveInteger(value: unknown, field: string): number { const parsed = Number(value); if (!Number.isInteger(parsed) || parsed < 1) throw new ApiException("VALIDATION_ERROR", `${field} deve ser inteiro positivo.`); return parsed; }
 function validatePositiveNumber(value: unknown): number { const parsed = Number(value); if (!Number.isFinite(parsed) || parsed <= 0) throw new ApiException("VALIDATION_ERROR", "Quantidade deve ser maior que zero."); return parsed; }
 function validateNonNegativeNumber(value: unknown, field = "valor"): number { const parsed = Number(value); if (!Number.isFinite(parsed) || parsed < 0) throw new ApiException("VALIDATION_ERROR", `${field} não pode ser negativo.`); return Math.round((parsed + Number.EPSILON) * 100) / 100; }

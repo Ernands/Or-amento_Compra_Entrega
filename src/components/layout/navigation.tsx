@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/auth/auth-context";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
@@ -35,10 +36,12 @@ const roadmapItems = [
 ];
 
 function NavigationLinks({ onNavigate }: { onNavigate?: () => void }) {
+  const { accessMode } = useAuth();
   const { pathname } = useLocation();
+  const visibleItems = accessMode === "visitor" ? primaryItems.filter((item) => item.href !== "/diagnostico") : primaryItems;
   return (
     <nav className="flex flex-col gap-1" aria-label="Navegação principal">
-      {primaryItems.map((item) => {
+      {visibleItems.map((item) => {
         const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
         return (
           <Link

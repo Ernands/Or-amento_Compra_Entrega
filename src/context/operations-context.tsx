@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 
 import { useAuth } from "@/auth/auth-context";
-import type { BootstrapPayload } from "@/data/api/apps-script-operations-repository";
+import type { ViewBootstrapPayload } from "@/data/api/apps-script-operations-repository";
 import { createOperationsRepository } from "@/data/repositories/create-operations-repository";
 import type { DataSourceInfo, Item, Necessity, Store, TechnicalStatus, UpdateItemInput, UpdateStoreInput } from "@/domain/entities";
 import { OperationsService, buildDashboard } from "@/services/operations-service";
@@ -25,7 +25,7 @@ interface OperationsState {
 const OperationsContext = createContext<OperationsState | null>(null);
 
 export function OperationsProvider({ children }: { children: React.ReactNode }) {
-  const { bootstrap, bootstrapError, bootstrapLoading, credential, developmentMode, refreshBootstrap } = useAuth();
+  const { accessMode, bootstrap, bootstrapError, bootstrapLoading, credential, developmentMode, refreshBootstrap } = useAuth();
   const [refreshKey, setRefreshKey] = useState(0);
   const [state, setState] = useState<Omit<OperationsState, "refresh" | "getTechnicalStatus" | "updateStore" | "updateItem">>({
     loading: Boolean(credential), error: "", source: null, stores: [], items: [], necessities: [], dashboard: null,
@@ -53,19 +53,22 @@ export function OperationsProvider({ children }: { children: React.ReactNode }) 
     else void refreshBootstrap();
   }, [developmentMode, refreshBootstrap]);
   const getTechnicalStatus = useCallback(async () => {
+    if (accessMode === "visitor") throw new Error("Entre com Google para acessar o diagnóstico técnico.");
     if (!credential) throw new Error("Sessão não encontrada.");
     return createOperationsRepository(credential).getTechnicalStatus();
-  }, [credential]);
+  }, [accessMode, credential]);
   const updateStore = useCallback(async (input: UpdateStoreInput) => {
+    if (accessMode === "visitor") throw new Error("Entre com Google para realizar alterações.");
     if (!credential) throw new Error("Sessão não encontrada.");
     await createOperationsRepository(credential).updateStore(input);
     await refreshBootstrap();
-  }, [credential, refreshBootstrap]);
+  }, [accessMode, credential, refreshBootstrap]);
   const updateItem = useCallback(async (input: UpdateItemInput) => {
+    if (accessMode === "visitor") throw new Error("Entre com Google para realizar alterações.");
     if (!credential) throw new Error("Sessão não encontrada.");
     await createOperationsRepository(credential).updateItem(input);
     await refreshBootstrap();
-  }, [credential, refreshBootstrap]);
+  }, [accessMode, credential, refreshBootstrap]);
   const resolvedState = bootstrap
     ? { ...stateFromBootstrap(bootstrap), loading: bootstrapLoading, error: bootstrapError }
     : state;
@@ -78,7 +81,7 @@ export function useOperations() {
   return context;
 }
 
-function stateFromBootstrap(bootstrap: BootstrapPayload): Omit<OperationsState, "refresh" | "getTechnicalStatus" | "updateStore" | "updateItem"> {
+function stateFromBootstrap(bootstrap: ViewBootstrapPayload): Omit<OperationsState, "refresh" | "getTechnicalStatus" | "updateStore" | "updateItem"> {
   const { source, stores, items, necessities, activeQuoteNecessityIds } = bootstrap;
   return {
     loading: false,

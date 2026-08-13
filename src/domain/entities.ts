@@ -122,11 +122,11 @@ export interface StoreProgress {
 }
 
 export interface DataSourceInfo {
-  kind: "apps-script" | "official-snapshot";
-  label: string;
+  kind: "apps-script" | "official-snapshot" | "public";
+  label?: string;
   status: "connected" | "snapshot" | "error";
   readOnly: boolean;
-  spreadsheetId: string;
+  spreadsheetId?: string;
   checkedAt: string;
   message: string;
 }

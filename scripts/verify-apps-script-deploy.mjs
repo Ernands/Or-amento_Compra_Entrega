@@ -20,6 +20,17 @@ assert.deepEqual(
 );
 assert.match(deployCode, /function doGet\(event\)/, "doGet(event) ausente.");
 assert.match(deployCode, /function doPost\(event\)/, "doPost(event) ausente.");
+assert.match(deployCode, /function dispatchPublicReadAction\(/, "Dispatch público isolado ausente.");
+assert.match(deployCode, /function dispatchAuthenticatedAction\(/, "Dispatch autenticado ausente.");
+assert.match(deployCode, /getProperty\("PUBLIC_READ_ACCESS"\)/, "PUBLIC_READ_ACCESS não usa PropertiesService.");
+assert.match(deployCode, /verifyGoogleCredential\(requireGoogleCredential\(request\.credential\)\)[\s\S]*?const spreadsheet = openConfiguredSpreadsheet\(\)/, "Ações autenticadas devem exigir credencial antes de abrir a planilha.");
+const publicDispatchCode = deployCode.slice(deployCode.indexOf("function dispatchPublicReadAction"), deployCode.indexOf("function dispatchAuthenticatedAction"));
+for (const action of ["createSupplier", "createQuote", "updateQuote", "deleteQuote", "selectQuote", "updateNecessity", "updateStore", "updateItem", "technicalStatus"]) {
+  assert.doesNotMatch(publicDispatchCode, new RegExp(action), `${action} não pode pertencer ao dispatch público.`);
+}
+for (const action of ["publicBootstrap", "publicQuotesWorkspace"]) {
+  assert.match(publicDispatchCode, new RegExp(`case "${action}":`), `${action} deve pertencer ao dispatch público.`);
+}
 assert.match(deployCode, /function updateStore\(/, "updateStore ausente.");
 assert.match(deployCode, /function updateItem\(/, "updateItem ausente.");
 for (const action of ["quotesWorkspace", "createSupplier", "createQuote", "updateQuote", "deleteQuote", "selectQuote"]) {
@@ -68,6 +79,7 @@ assert.match(
   "A única chamada UrlFetchApp deve usar o endpoint tokeninfo permitido.",
 );
 
+const scriptProperties = { PUBLIC_READ_ACCESS: "SIM", SPREADSHEET_ID: "DEV_TEST" };
 const sandbox = {
   console,
   ContentService: {
@@ -79,6 +91,9 @@ const sandbox = {
         setMimeType() { return this; },
       };
     },
+  },
+  PropertiesService: {
+    getScriptProperties: () => ({ getProperty: (name) => scriptProperties[name] || null }),
   },
   Utilities: { getUuid: () => "local-request-id" },
 };
@@ -96,6 +111,71 @@ const postHealth = JSON.parse(sandbox.doPost({
 assert.equal(postHealth.ok, true);
 assert.equal(postHealth.data.status, "ok");
 assert.equal(postHealth.requestId, "local-request-id");
+
+const unauthenticatedWrite = JSON.parse(sandbox.doPost({
+  postData: { contents: JSON.stringify({ action: "createQuote", payload: {} }) },
+}).getContent());
+assert.equal(unauthenticatedWrite.ok, false);
+assert.equal(unauthenticatedWrite.error.code, "AUTH_REQUIRED");
+assert.match(unauthenticatedWrite.error.message, /Entre com Google/);
+
+function fakeDataSheet(headers, rows) {
+  const values = [[""], [""], [""], headers, ...rows];
+  return {
+    getLastColumn: () => headers.length,
+    getLastRow: () => values.length,
+    getRange: (row, column, rowCount, columnCount) => ({
+      getValues: () => Array.from({ length: rowCount }, (_, rowIndex) => Array.from({ length: columnCount }, (_entry, columnIndex) => values[row - 1 + rowIndex]?.[column - 1 + columnIndex] ?? "")),
+    }),
+  };
+}
+
+const publicSheets = {
+  "01_LOJAS": fakeDataSheet(
+    ["ID_Loja", "Loja", "Cidade", "UF", "Status", "Responsável", "E-mail", "Telefone"],
+    [["LOJ-001", "Loja 01", "Fortaleza", "CE", "Ativa", "Pessoa privada", "privado@example.com", "85999999999"]],
+  ),
+  "02_ITENS": fakeDataSheet(
+    ["ID_Item", "Código_Original", "Grupo", "Área", "Item", "Status_Especificação", "Código_Duplicado", "Observações"],
+    [["ITM-00001", "MOB-001", "Mobiliário", "Transacional", "Balcão", "Liberado para cotação", "Não", "Nota privada"]],
+  ),
+  "03_NECESSIDADES": fakeDataSheet(
+    ["ID_Necessidade", "ID_Loja", "ID_Item", "Qtd_Planejada", "Prioridade", "Status", "created_by"],
+    [["NEC-000001", "LOJ-001", "ITM-00001", 1, "Média", "Em cotação", "privado@example.com"]],
+  ),
+  "05_COTACOES": fakeDataSheet(
+    ["ID_Cotação", "ID_Necessidade", "ID_Loja", "ID_Item", "ID_Fornecedor", "Quantidade", "Valor_Total", "Prazo_Dias", "Status", "Selecionada", "Link_Proposta", "Observações", "created_by", "ativo"],
+    [["COT-999999", "NEC-000001", "LOJ-001", "ITM-00001", "FOR-999999", 1, 579, 10, "Recebida", "Não", "https://privado.example/proposta", "Nota privada", "privado@example.com", "Sim"]],
+  ),
+};
+const publicSpreadsheet = { getSheetByName: (name) => publicSheets[name] || null };
+const publicBootstrap = sandbox.buildPublicBootstrap(publicSpreadsheet);
+assert.deepEqual(Object.keys(publicBootstrap.stores[0]), ["id", "name", "city", "state", "status"]);
+assert.deepEqual(Object.keys(publicBootstrap.necessities[0]), ["id", "storeId", "itemId", "quantity", "priority", "status"]);
+assert.doesNotMatch(JSON.stringify(publicBootstrap), /Pessoa privada|privado@example\.com|Nota privada/);
+const publicQuotes = sandbox.buildPublicQuotesWorkspace(publicSpreadsheet);
+assert.deepEqual(Object.keys(publicQuotes.suppliers[0]), ["id", "name"]);
+assert.deepEqual(Object.keys(publicQuotes.quotes[0]), ["id", "necessityId", "storeId", "itemId", "supplierId", "quantity", "total", "leadTimeDays", "status", "selected"]);
+assert.equal(publicQuotes.suppliers[0].name, "Fornecedor 01");
+assert.equal(publicQuotes.quotes[0].id, "PUB-COT-000001");
+assert.doesNotMatch(JSON.stringify(publicQuotes), /FOR-999999|COT-999999|privado|proposta|Nota privada/i);
+
+sandbox.SpreadsheetApp = { openById: (id) => {
+  assert.equal(id, "DEV_TEST");
+  return publicSpreadsheet;
+} };
+const publicPost = JSON.parse(sandbox.doPost({
+  postData: { contents: JSON.stringify({ action: "publicBootstrap", payload: {} }) },
+}).getContent());
+assert.equal(publicPost.ok, true);
+assert.equal(publicPost.data.source.kind, "public");
+scriptProperties.PUBLIC_READ_ACCESS = "NAO";
+const disabledPublicPost = JSON.parse(sandbox.doPost({
+  postData: { contents: JSON.stringify({ action: "publicBootstrap", payload: {} }) },
+}).getContent());
+assert.equal(disabledPublicPost.ok, false);
+assert.equal(disabledPublicPost.error.code, "PUBLIC_ACCESS_DISABLED");
+scriptProperties.PUBLIC_READ_ACCESS = "SIM";
 
 const technicalHeaders = ["created_at", "created_by", "updated_at", "updated_by", "version", "ativo"];
 const setupTables = [

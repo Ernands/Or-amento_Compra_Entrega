@@ -15,7 +15,7 @@ import { useOperations } from "@/context/operations-context";
 import type { Item } from "@/domain/entities";
 
 export function ItemsPage() {
-  const { user } = useAuth();
+  const { accessMode, user } = useAuth();
   const { items, loading, error, refresh, updateItem } = useOperations();
   const [query, setQuery] = useState("");
   const [area, setArea] = useState("");
@@ -32,7 +32,7 @@ export function ItemsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader eyebrow="Catálogo mestre" title="Itens" description="Edite especificações, rotas e dados do catálogo sem alterar o ID interno." />
+      <PageHeader eyebrow="Catálogo mestre" title="Itens" description={accessMode === "visitor" ? "Catálogo operacional dos itens previstos para as lojas." : "Edite especificações, rotas e dados do catálogo sem alterar o ID interno."} />
       <Card className="shadow-none"><CardContent className="grid gap-2 p-4 md:grid-cols-[minmax(0,1fr)_220px]"><div className="relative"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar código, item ou grupo" className="pl-9" /></div><select aria-label="Filtrar por área" value={area} onChange={(event) => setArea(event.target.value)} className="h-9 rounded-md border bg-transparent px-3 text-sm"><option value="">Todas as áreas</option>{areas.map((entry) => <option key={entry}>{entry}</option>)}</select></CardContent></Card>
       <Card className="overflow-hidden py-0 shadow-none">
         <CardContent className="overflow-x-auto p-0">

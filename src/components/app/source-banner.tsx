@@ -6,14 +6,15 @@ import { dateFormatter } from "@/lib/format";
 
 export function SourceBanner({ source }: { source: DataSourceInfo }) {
   const connected = source.status === "connected";
+  const publicAccess = source.kind === "public";
   const Icon = connected ? CheckCircle2 : source.status === "error" ? AlertTriangle : Database;
   return (
     <Alert className={connected ? "border-emerald-200 bg-emerald-50/80" : "border-amber-200 bg-amber-50/80"}>
       <Icon className={connected ? "text-emerald-700" : "text-amber-700"} />
-      <AlertTitle>{connected ? "Sincronização ao vivo ativa" : "Modo de leitura segura"}</AlertTitle>
+      <AlertTitle>{publicAccess ? "Modo visitante — dados ao vivo" : connected ? "Sincronização ao vivo ativa" : "Modo de leitura segura"}</AlertTitle>
       <AlertDescription className="mt-1 max-w-5xl text-xs leading-relaxed sm:text-sm">
         {source.message}
-        {source.checkedAt ? ` ${connected ? "Conexão conferida" : "Snapshot conferido"} em ${dateFormatter.format(new Date(source.checkedAt))}.` : null}
+        {source.checkedAt ? ` ${publicAccess ? "Dados conferidos" : connected ? "Conexão conferida" : "Snapshot conferido"} em ${dateFormatter.format(new Date(source.checkedAt))}.` : null}
       </AlertDescription>
     </Alert>
   );

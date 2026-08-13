@@ -25,6 +25,7 @@ Em **Configurações do projeto → Propriedades do script**:
 | --- | --- |
 | `SPREADSHEET_ID` | `1oU1ytbche1s1V4J6kF_xXdWgV-WdGU2xG8t79qQf62c` |
 | `GOOGLE_CLIENT_ID` | `636511329976-k25aj1bnqrn7ncltfsv526d0q467jdou.apps.googleusercontent.com` |
+| `PUBLIC_READ_ACCESS` | `SIM` |
 
 `ALLOW_SETUP` não é permanente. Use `ALLOW_SETUP=SIM` somente durante a preparação inicial descrita abaixo; a própria função o apaga ao concluir.
 
@@ -60,6 +61,7 @@ Execute no editor, nesta ordem:
 2. `testPostHealthCheck()` — valida o envelope POST público e deve retornar `ok: true`.
 3. `diagnoseSpreadsheet()` — somente leitura; o relatório deve retornar `ready: true`. Em `tables`, cada aba deve ter `ok: true` e `missing: []`.
 4. Confirme que existe um usuário DEV ativo em `09_USUARIOS` com o mesmo e-mail usado no login Google.
+5. Após publicar, teste `publicBootstrap` sem `credential` e confirme que o retorno possui `source.kind: "public"`.
 
 Para esta entrega de Cotações, não execute `setupTechnicalColumns()`: a estrutura DEV já foi preparada e o módulo é compatível com os cabeçalhos existentes.
 
@@ -86,6 +88,8 @@ O teste autenticado de `bootstrap` também aceita `GOOGLE_ID_TOKEN` temporário.
 
 - `GET ?action=health`: health check público.
 - `POST {"action":"health"}`: health check público.
+- `POST {"action":"publicBootstrap","payload":{}}`: dashboard, lojas, itens e necessidades em DTO público reduzido, sem autenticação Google.
+- `POST {"action":"publicQuotesWorkspace","payload":{}}`: cotações operacionais reduzidas, com fornecedor e ID de cotação anonimizados, sem autenticação Google.
 - `POST {"action":"bootstrap","credential":"<Google ID token>","payload":{}}`: sessão, lojas, itens, necessidades e IDs das necessidades com cotação ativa, filtrados pelo escopo do usuário.
 - `POST {"action":"technicalStatus","credential":"<Google ID token>","payload":{}}`: diagnóstico somente leitura das 12 abas; lê no máximo as 10 primeiras linhas de cada aba para localizar cabeçalhos e verificar colunas técnicas.
 - `POST {"action":"updateNecessity","credential":"<Google ID token>","payload":{...}}`: escrita versionada com permissão, validação de status, `LockService` e auditoria em `12_HISTORICO`.
@@ -99,3 +103,5 @@ O teste autenticado de `bootstrap` também aceita `GOOGLE_ID_TOKEN` temporário.
 - `POST {"action":"selectQuote","credential":"<Google ID token>","payload":{"id":"COT-000001","version":2,"reason":"..."}}`: seleciona manualmente uma proposta recebida e desmarca a anterior da mesma necessidade.
 
 Todo acesso à planilha usa `SPREADSHEET_ID` via `PropertiesService`. O ID não é hardcoded em `Code.gs`.
+
+As ações públicas passam exclusivamente por `dispatchPublicReadAction`. Toda ação ausente dessa lista, inclusive qualquer `create*`, `update*`, `delete*` ou `select*`, exige uma credencial Google válida antes mesmo de abrir a planilha.

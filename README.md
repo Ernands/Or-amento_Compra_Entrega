@@ -11,6 +11,7 @@ O primeiro fluxo executável está pronto:
 - necessidades com paginação em 100, 250 ou 500 registros e opção para exibir as 2.295 relações de uma vez;
 - planilha DEV nativa validada e snapshot verificado para desenvolvimento seguro;
 - login Google Identity Services para produção;
+- acesso visitante sem Google, com dados operacionais ao vivo e segurança somente leitura aplicada no backend;
 - módulo Cotações ao vivo: cadastro mínimo de fornecedores, propostas por necessidade, cálculo de custos, filtros, edição de vínculo, exclusão lógica, comparação e seleção para a futura aprovação;
 - Google Apps Script Web App com `bootstrap` em lote, diagnóstico técnico autenticado e escrita versionada de lojas, itens, necessidades, fornecedores e cotações;
 - permissões por perfil e escopo de loja no backend;
@@ -69,12 +70,15 @@ O Client ID não é segredo. Nunca coloque Client Secret no frontend; este fluxo
 2. Em **Project Settings → Script properties**, configure:
    - `SPREADSHEET_ID`: `1oU1ytbche1s1V4J6kF_xXdWgV-WdGU2xG8t79qQf62c` no ambiente DEV;
    - `GOOGLE_CLIENT_ID`: Client ID OAuth Web.
+   - `PUBLIC_READ_ACCESS`: `SIM` para habilitar o modo visitante.
 3. Execute manualmente `diagnoseSpreadsheet()` no editor e revise o log.
 4. Para adicionar campos técnicos, defina temporariamente `ALLOW_SETUP=SIM` e execute `setupTechnicalColumns()`. O script cria backups de cada aba afetada e remove a autorização ao terminar.
 5. Faça **Deploy → New deployment → Web app** na primeira publicação, ou **Deploy → Manage deployments → Edit → New version** para atualizar uma implantação existente:
    - Execute as: **Me**;
    - Who has access: opção que permita ao frontend alcançar o endpoint.
 6. Copie a URL terminada em `/exec`.
+
+O modo visitante e sua lista explícita de campos públicos estão documentados em [docs/ACESSO_VISITANTE.md](docs/ACESSO_VISITANTE.md).
 
 ## Configurar GitHub Actions e Pages
 
