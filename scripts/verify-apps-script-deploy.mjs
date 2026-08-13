@@ -79,6 +79,30 @@ assert.match(
   "A única chamada UrlFetchApp deve usar o endpoint tokeninfo permitido.",
 );
 
+assert.match(deployCode, /function prevalidateQuoteProposalsV1\(/, "Prevalidacao manual da migracao de propostas ausente.");
+assert.match(deployCode, /function migrateQuoteProposalsV1\(/, "Migracao manual de propostas ausente.");
+assert.match(deployCode, /ALLOW_MIGRATE_QUOTE_PROPOSALS_V1/, "A migracao deve exigir uma propriedade temporaria propria.");
+const migrationEntryCode = deployCode.slice(
+  deployCode.indexOf("function migrateQuoteProposalsV1"),
+  deployCode.indexOf("function buildQuoteProposalMigrationPlanV1"),
+);
+assert.match(
+  migrationEntryCode,
+  /buildQuoteProposalMigrationPlanV1\(spreadsheet\)[\s\S]*?if \(!plan\.report\.ready_to_migrate\)[\s\S]*?executeQuoteProposalMigrationV1\(spreadsheet, plan\)/,
+  "A migracao deve abortar pela prevalidacao antes de chamar a primeira rotina de escrita.",
+);
+assert.match(migrationEntryCode, /deleteProperty\(QUOTE_PROPOSAL_MIGRATION_PROPERTY_V1\)/, "A propriedade temporaria deve ser consumida ao final.");
+assert.doesNotMatch(migrationEntryCode, /setupTechnicalColumns/, "A migracao nao pode executar setupTechnicalColumns().");
+const migrationPrevalidationCode = deployCode.slice(
+  deployCode.indexOf("function prevalidateQuoteProposalsV1"),
+  deployCode.indexOf("function migrateQuoteProposalsV1"),
+);
+assert.doesNotMatch(
+  migrationPrevalidationCode,
+  /setValue|setValues|clear\(|copyTo\(|insertSheet|deleteSheet|appendAudit/,
+  "A funcao publica de prevalidacao deve ser estritamente somente leitura.",
+);
+
 const scriptProperties = { PUBLIC_READ_ACCESS: "SIM", SPREADSHEET_ID: "DEV_TEST" };
 const sandbox = {
   console,
@@ -129,6 +153,64 @@ function fakeDataSheet(headers, rows) {
     }),
   };
 }
+
+const legacyQuoteHeaders = [
+  "ID_Cotacao", "ID_Necessidade", "ID_Loja", "ID_Item", "ID_Fornecedor", "Origem_Cotacao",
+  "Preco_Unitario", "Quantidade", "Frete", "Outros_Custos", "Valor_Total", "Forma_Pagamento",
+  "Prazo_Dias", "Validade_Proposta", "Link", "Nota_Fornecedor", "Status", "Selecionada",
+  "Data_Cotacao", "Responsavel", "Observacoes", "created_at", "created_by", "updated_at",
+  "updated_by", "version", "ativo",
+];
+const legacyQuoteRow = [
+  "COT-000001", "NEC-000001", "LOJ-001", "ITM-00001", "FOR-000001", "Matriz",
+  575, 1, 2, 2, 579, "PIX", 10, "2026-08-31", "https://example.com/proposta", 5,
+  "Recebida", "Nao", "2026-08-13", "Ernands Santos", "Registro legado", "2026-08-13",
+  "USR-000001", "2026-08-13", "USR-000001", 1, "Sim",
+];
+function legacyMigrationSpreadsheet(quoteRows = [legacyQuoteRow], supplierRows = [["FOR-000001"]]) {
+  const sheets = {
+    "05_COTACOES": fakeDataSheet(legacyQuoteHeaders, quoteRows),
+    "03_NECESSIDADES": fakeDataSheet(
+      ["ID_Necessidade", "ID_Loja", "ID_Item"],
+      [["NEC-000001", "LOJ-001", "ITM-00001"]],
+    ),
+    "04_FORNECEDORES": fakeDataSheet(["ID_Fornecedor"], supplierRows),
+    "12_HISTORICO": fakeDataSheet(
+      ["ID_Historico", "Data_Hora", "ID_Usuario", "Modulo", "ID_Registro", "Acao", "Campo", "Valor_Anterior", "Valor_Novo", "Origem", "Referencia", "Observacoes"],
+      [],
+    ),
+    "14_LISTAS": {
+      getRange: (range) => ({
+        getValues: () => range === "I5:I6" ? [["Sim"], ["Nao"]] : [["Opcao"], [""], [""], [""], [""], [""]],
+      }),
+    },
+  };
+  return { getSheetByName: (name) => sheets[name] || null };
+}
+
+const migrationPlan = sandbox.buildQuoteProposalMigrationPlanV1(legacyMigrationSpreadsheet());
+assert.equal(migrationPlan.report.current_quotes, 1);
+assert.equal(migrationPlan.report.proposals_to_create, 1);
+assert.equal(migrationPlan.report.links_to_create, 1);
+assert.equal(migrationPlan.report.ready_to_migrate, true);
+assert.equal(migrationPlan.records[0].quoteId, "COT-000001");
+assert.equal(migrationPlan.records[0].proposalId, "PRP-000001");
+assert.equal(migrationPlan.records[0].subtotal, 575);
+assert.equal(migrationPlan.records[0].total, 579);
+
+const invalidTotalRow = legacyQuoteRow.slice();
+invalidTotalRow[10] = 999;
+const invalidTotalPlan = sandbox.buildQuoteProposalMigrationPlanV1(legacyMigrationSpreadsheet([invalidTotalRow]));
+assert.equal(invalidTotalPlan.report.ready_to_migrate, false);
+assert.equal(invalidTotalPlan.report.invalid_values_totals.length, 1);
+
+const missingSupplierPlan = sandbox.buildQuoteProposalMigrationPlanV1(legacyMigrationSpreadsheet([legacyQuoteRow], []));
+assert.equal(missingSupplierPlan.report.ready_to_migrate, false);
+assert.equal(missingSupplierPlan.report.missing_suppliers.length, 1);
+
+const duplicateQuotePlan = sandbox.buildQuoteProposalMigrationPlanV1(legacyMigrationSpreadsheet([legacyQuoteRow, legacyQuoteRow]));
+assert.equal(duplicateQuotePlan.report.ready_to_migrate, false);
+assert.equal(duplicateQuotePlan.report.duplicate_ids.length, 1);
 
 const publicSheets = {
   "01_LOJAS": fakeDataSheet(

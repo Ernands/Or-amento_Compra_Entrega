@@ -18,6 +18,7 @@ const APP_CONFIG = {
         permissions: "10_PERMISSOES",
         history: "12_HISTORICO",
         routes: "15_ROTAS_COMPRA",
+        quoteProposals: "16_PROPOSTAS_COTACAO",
         lists: "14_LISTAS",
     },
     timezone: "America/Fortaleza",
@@ -739,8 +740,8 @@ function appendAuditBatch(spreadsheet, user, entries) {
         setCell(table, row, "Campo", change.field);
         setCell(table, row, "Valor_Anterior", change.previous);
         setCell(table, row, "Valor_Novo", change.next);
-        setCell(table, row, "Origem", "SISTEMA_WEB");
-        setCell(table, row, "Referência", user.email);
+        setCell(table, row, "Origem", entry.origin || "SISTEMA_WEB");
+        setCell(table, row, "Referência", entry.reference || user.email);
         setCell(table, row, "Observações", entry.reason);
         return row;
     }));
@@ -1238,6 +1239,562 @@ function inspectTechnicalTable(spreadsheet, sheetName, keyHeader) {
     const normalizedHeaders = preview[headerOffset].map(normalizeHeader);
     const missing = APP_CONFIG.technicalHeaders.filter((header) => normalizedHeaders.indexOf(normalizeHeader(header)) < 0);
     return { sheet: sheetName, ok: true, headerRow: headerOffset + 1, missing };
+}
+const QUOTE_PROPOSAL_MIGRATION_PROPERTY_V1 = "ALLOW_MIGRATE_QUOTE_PROPOSALS_V1";
+const QUOTE_PROPOSAL_HEADERS_V1 = [
+    "ID_Proposta", "ID_Fornecedor", "Origem_Cotação", "Quantidade_Total", "Subtotal_Itens", "Frete_Total",
+    "Outros_Custos_Total", "Valor_Total_Proposta", "Forma_Pagamento", "Prazo_Dias", "Validade_Proposta", "Link",
+    "Nota_Fornecedor", "Status", "Selecionada", "Data_Cotação", "Responsável", "Observações", "created_at",
+    "created_by", "updated_at", "updated_by", "version", "ativo",
+];
+const QUOTE_LINK_HEADERS_V1 = [
+    "ID_Cotação", "ID_Proposta", "ID_Necessidade", "ID_Loja", "ID_Item", "Preço_Unitário", "Quantidade",
+    "Subtotal_Linha", "created_at", "created_by", "updated_at", "updated_by", "version", "ativo",
+];
+/**
+ * Pré-validação manual e estritamente somente leitura da migração de propostas agrupadas.
+ * Não exige nem consome a propriedade temporária de autorização.
+ */
+function prevalidateQuoteProposalsV1() {
+    const report = buildQuoteProposalMigrationPlanV1(openConfiguredSpreadsheet()).report;
+    console.log(JSON.stringify(report, null, 2));
+    return report;
+}
+/**
+ * Migração manual V1. Nunca é chamada pelo frontend ou por setupTechnicalColumns().
+ * A primeira escrita na planilha só ocorre após a pré-validação retornar ready_to_migrate=true.
+ */
+function migrateQuoteProposalsV1() {
+    const properties = PropertiesService.getScriptProperties();
+    if (properties.getProperty(QUOTE_PROPOSAL_MIGRATION_PROPERTY_V1) !== "SIM") {
+        throw new Error(`Defina ${QUOTE_PROPOSAL_MIGRATION_PROPERTY_V1}=SIM temporariamente para autorizar a migração.`);
+    }
+    try {
+        return withScriptLock(() => {
+            const spreadsheet = openConfiguredSpreadsheet();
+            const plan = buildQuoteProposalMigrationPlanV1(spreadsheet);
+            if (!plan.report.ready_to_migrate) {
+                console.log(JSON.stringify({ status: "aborted_before_write", report: plan.report }, null, 2));
+                throw new ApiException("MIGRATION_PREVALIDATION_FAILED", "A migração foi abortada antes da primeira escrita porque a pré-validação encontrou inconsistências.", plan.report);
+            }
+            if (plan.report.already_migrated) {
+                const result = { status: "already_migrated", report: plan.report };
+                console.log(JSON.stringify(result, null, 2));
+                return result;
+            }
+            return executeQuoteProposalMigrationV1(spreadsheet, plan);
+        });
+    }
+    finally {
+        properties.deleteProperty(QUOTE_PROPOSAL_MIGRATION_PROPERTY_V1);
+    }
+}
+function buildQuoteProposalMigrationPlanV1(spreadsheet) {
+    const report = emptyQuoteProposalMigrationReportV1();
+    inspectQuoteProposalMigrationPrerequisitesV1(spreadsheet, report);
+    const quoteSheet = spreadsheet.getSheetByName(APP_CONFIG.sheets.quotes);
+    if (!quoteSheet) {
+        report.structural_issues.push({ sheet: APP_CONFIG.sheets.quotes, issue: "Aba obrigatória não encontrada." });
+        return finalizeQuoteProposalMigrationPlanV1(report, []);
+    }
+    const headerInfo = inspectMigrationHeadersV1(quoteSheet, "ID_Cotação");
+    if (!headerInfo.headerRow) {
+        report.structural_issues.push({ sheet: APP_CONFIG.sheets.quotes, issue: "Cabeçalho ID_Cotação não localizado nas primeiras 10 linhas." });
+        return finalizeQuoteProposalMigrationPlanV1(report, []);
+    }
+    const hasProposalId = headerInfo.normalizedHeaders.indexOf(normalizeHeader("ID_Proposta")) >= 0;
+    const proposalSheet = spreadsheet.getSheetByName(APP_CONFIG.sheets.quoteProposals);
+    if (hasProposalId || proposalSheet) {
+        if (!hasProposalId || !proposalSheet) {
+            report.structural_issues.push({
+                sheet: `${APP_CONFIG.sheets.quotes}/${APP_CONFIG.sheets.quoteProposals}`,
+                issue: "Migração parcial detectada: ID_Proposta e 16_PROPOSTAS_COTACAO devem existir juntos.",
+            });
+            return finalizeQuoteProposalMigrationPlanV1(report, []);
+        }
+        return buildExistingQuoteProposalMigrationPlanV1(spreadsheet, report);
+    }
+    return buildLegacyQuoteProposalMigrationPlanV1(spreadsheet, report);
+}
+function inspectQuoteProposalMigrationPrerequisitesV1(spreadsheet, report) {
+    const history = spreadsheet.getSheetByName(APP_CONFIG.sheets.history);
+    if (!history) {
+        report.structural_issues.push({ sheet: APP_CONFIG.sheets.history, issue: "Aba obrigatória não encontrada." });
+    }
+    else {
+        const headerInfo = inspectMigrationHeadersV1(history, "ID_Histórico");
+        const required = [
+            "ID_Histórico", "Data_Hora", "ID_Usuário", "Módulo", "ID_Registro", "Ação", "Campo",
+            "Valor_Anterior", "Valor_Novo", "Origem", "Referência", "Observações",
+        ];
+        const missing = required.filter((header) => headerInfo.normalizedHeaders.indexOf(normalizeHeader(header)) < 0);
+        if (!headerInfo.headerRow || missing.length) {
+            report.structural_issues.push({ sheet: APP_CONFIG.sheets.history, issue: "Cabeçalhos obrigatórios ausentes.", missing });
+        }
+    }
+    const lists = spreadsheet.getSheetByName(APP_CONFIG.sheets.lists);
+    if (!lists) {
+        report.structural_issues.push({ sheet: APP_CONFIG.sheets.lists, issue: "Aba obrigatória não encontrada." });
+        return;
+    }
+    try {
+        const requiredLists = [
+            { range: "C5:C10", field: "Status" },
+            { range: "F5:F10", field: "Origem_Cotação" },
+            { range: "G5:G10", field: "Forma_Pagamento" },
+            { range: "I5:I6", field: "Selecionada" },
+        ];
+        requiredLists.forEach(({ range, field }) => {
+            const values = lists.getRange(range).getValues().flat().filter((value) => String(value || "").trim() !== "");
+            if (!values.length)
+                report.structural_issues.push({ sheet: APP_CONFIG.sheets.lists, range, issue: `Lista ${field} vazia.` });
+        });
+    }
+    catch (error) {
+        report.structural_issues.push({ sheet: APP_CONFIG.sheets.lists, issue: error instanceof Error ? error.message : "Não foi possível validar as listas auxiliares." });
+    }
+}
+function buildLegacyQuoteProposalMigrationPlanV1(spreadsheet, report) {
+    let quotes;
+    let necessities;
+    let suppliers;
+    try {
+        quotes = readTable(spreadsheet, APP_CONFIG.sheets.quotes, [
+            "ID_Cotação", "ID_Necessidade", "ID_Loja", "ID_Item", "ID_Fornecedor", "Preço_Unitário", "Quantidade",
+            "Frete", "Outros_Custos", "Valor_Total", "Status", "Selecionada", "version", "ativo",
+        ]);
+        necessities = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "ID_Loja", "ID_Item"]);
+        suppliers = readTable(spreadsheet, APP_CONFIG.sheets.suppliers, ["ID_Fornecedor"]);
+    }
+    catch (error) {
+        report.structural_issues.push({ issue: error instanceof Error ? error.message : "Estrutura legada inválida." });
+        return finalizeQuoteProposalMigrationPlanV1(report, []);
+    }
+    report.current_quotes = quotes.rows.length;
+    report.proposals_to_create = quotes.rows.length;
+    report.links_to_create = quotes.rows.length;
+    report.duplicate_ids.push(...findDuplicateMigrationIdsV1(quotes, "ID_Cotação", APP_CONFIG.sheets.quotes), ...findDuplicateMigrationIdsV1(necessities, "ID_Necessidade", APP_CONFIG.sheets.necessities), ...findDuplicateMigrationIdsV1(suppliers, "ID_Fornecedor", APP_CONFIG.sheets.suppliers));
+    const necessityMap = uniqueMigrationRowMapV1(necessities, "ID_Necessidade");
+    const supplierMap = uniqueMigrationRowMapV1(suppliers, "ID_Fornecedor");
+    const proposalIds = legacyProposalIdsV1(quotes);
+    const records = quotes.rows.map((row, rowIndex) => {
+        const quoteId = cell(quotes, row, "ID_Cotação");
+        const necessityId = cell(quotes, row, "ID_Necessidade");
+        const supplierId = cell(quotes, row, "ID_Fornecedor");
+        const storeId = cell(quotes, row, "ID_Loja");
+        const itemId = cell(quotes, row, "ID_Item");
+        const unitPrice = migrationNumberV1(rawCellV1(quotes, row, "Preço_Unitário"));
+        const quantity = migrationNumberV1(rawCellV1(quotes, row, "Quantidade"));
+        const freight = migrationNumberV1(rawCellV1(quotes, row, "Frete"), 0);
+        const otherCosts = migrationNumberV1(rawCellV1(quotes, row, "Outros_Custos"), 0);
+        const total = migrationNumberV1(rawCellV1(quotes, row, "Valor_Total"));
+        const subtotal = roundMoneyV1(unitPrice * quantity);
+        const expectedTotal = roundMoneyV1(subtotal + freight + otherCosts);
+        if (!quoteId)
+            report.orphan_records.push({ row: physicalRowNumber(quotes, rowIndex), issue: "ID_Cotação vazio." });
+        if (!necessityId)
+            report.orphan_records.push({ quote_id: quoteId, issue: "ID_Necessidade vazio." });
+        if (!supplierId)
+            report.orphan_records.push({ quote_id: quoteId, issue: "ID_Fornecedor vazio." });
+        if (!storeId)
+            report.orphan_records.push({ quote_id: quoteId, issue: "ID_Loja vazio." });
+        if (!itemId)
+            report.orphan_records.push({ quote_id: quoteId, issue: "ID_Item vazio." });
+        const necessity = necessityMap[necessityId];
+        if (necessityId && !necessity)
+            report.missing_necessities.push({ quote_id: quoteId, necessity_id: necessityId });
+        if (supplierId && !supplierMap[supplierId])
+            report.missing_suppliers.push({ quote_id: quoteId, supplier_id: supplierId });
+        if (necessity && (cell(necessities, necessity, "ID_Loja") !== storeId || cell(necessities, necessity, "ID_Item") !== itemId)) {
+            report.orphan_records.push({
+                quote_id: quoteId,
+                necessity_id: necessityId,
+                issue: "ID_Loja/ID_Item da cotação divergem da necessidade.",
+                quote_store_id: storeId,
+                necessity_store_id: cell(necessities, necessity, "ID_Loja"),
+                quote_item_id: itemId,
+                necessity_item_id: cell(necessities, necessity, "ID_Item"),
+            });
+        }
+        const invalidFields = [];
+        if (!Number.isFinite(unitPrice) || unitPrice < 0)
+            invalidFields.push("Preço_Unitário");
+        if (!Number.isFinite(quantity) || quantity <= 0)
+            invalidFields.push("Quantidade");
+        if (!Number.isFinite(freight) || freight < 0)
+            invalidFields.push("Frete");
+        if (!Number.isFinite(otherCosts) || otherCosts < 0)
+            invalidFields.push("Outros_Custos");
+        if (!Number.isFinite(total) || total < 0)
+            invalidFields.push("Valor_Total");
+        if (!invalidFields.length && Math.abs(total - expectedTotal) > 0.01)
+            invalidFields.push("Valor_Total_divergente");
+        if (invalidFields.length)
+            report.invalid_values_totals.push({ quote_id: quoteId, fields: invalidFields, expected_total: expectedTotal, actual_total: total });
+        validateLegacyQuoteStatusV1(quotes, row, quoteId, report);
+        return {
+            quoteId,
+            proposalId: proposalIds[rowIndex],
+            necessityId,
+            storeId,
+            itemId,
+            supplierId,
+            origin: cell(quotes, row, "Origem_Cotação"),
+            unitPrice,
+            quantity,
+            subtotal,
+            freight,
+            otherCosts,
+            total,
+            paymentMethod: cell(quotes, row, "Forma_Pagamento"),
+            leadTimeDays: migrationNumberV1(rawCellV1(quotes, row, "Prazo_Dias"), 0),
+            proposalValidUntil: rawCellV1(quotes, row, "Validade_Proposta"),
+            link: cell(quotes, row, "Link"),
+            supplierRating: rawCellV1(quotes, row, "Nota_Fornecedor"),
+            status: quoteStatusToSheet(knownQuoteStatusV1(cell(quotes, row, "Status")) || "RASCUNHO"),
+            selected: isYes(cell(quotes, row, "Selecionada")) ? "Sim" : "Não",
+            quoteDate: rawCellV1(quotes, row, "Data_Cotação"),
+            responsible: cell(quotes, row, "Responsável"),
+            notes: cell(quotes, row, "Observações"),
+            createdAt: rawCellV1(quotes, row, "created_at"),
+            createdBy: cell(quotes, row, "created_by"),
+            updatedAt: rawCellV1(quotes, row, "updated_at"),
+            updatedBy: cell(quotes, row, "updated_by"),
+            version: Math.max(1, Math.floor(migrationNumberV1(rawCellV1(quotes, row, "version"), 1))),
+            active: cell(quotes, row, "ativo") || "Sim",
+        };
+    });
+    return finalizeQuoteProposalMigrationPlanV1(report, records);
+}
+function buildExistingQuoteProposalMigrationPlanV1(spreadsheet, report) {
+    report.already_migrated = true;
+    let links;
+    let proposals;
+    let necessities;
+    let suppliers;
+    try {
+        links = readTable(spreadsheet, APP_CONFIG.sheets.quotes, QUOTE_LINK_HEADERS_V1);
+        proposals = readTable(spreadsheet, APP_CONFIG.sheets.quoteProposals, QUOTE_PROPOSAL_HEADERS_V1);
+        necessities = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "ID_Loja", "ID_Item"]);
+        suppliers = readTable(spreadsheet, APP_CONFIG.sheets.suppliers, ["ID_Fornecedor"]);
+    }
+    catch (error) {
+        report.structural_issues.push({ issue: error instanceof Error ? error.message : "Estrutura migrada inválida." });
+        return finalizeQuoteProposalMigrationPlanV1(report, []);
+    }
+    report.current_quotes = links.rows.length;
+    report.duplicate_ids.push(...findDuplicateMigrationIdsV1(links, "ID_Cotação", APP_CONFIG.sheets.quotes), ...findDuplicateMigrationIdsV1(proposals, "ID_Proposta", APP_CONFIG.sheets.quoteProposals), ...findDuplicateMigrationIdsV1(necessities, "ID_Necessidade", APP_CONFIG.sheets.necessities), ...findDuplicateMigrationIdsV1(suppliers, "ID_Fornecedor", APP_CONFIG.sheets.suppliers));
+    const proposalMap = uniqueMigrationRowMapV1(proposals, "ID_Proposta");
+    const necessityMap = uniqueMigrationRowMapV1(necessities, "ID_Necessidade");
+    const supplierMap = uniqueMigrationRowMapV1(suppliers, "ID_Fornecedor");
+    links.rows.forEach((row, rowIndex) => {
+        const quoteId = cell(links, row, "ID_Cotação");
+        const proposalId = cell(links, row, "ID_Proposta");
+        const necessityId = cell(links, row, "ID_Necessidade");
+        const necessity = necessityMap[necessityId];
+        if (!quoteId)
+            report.orphan_records.push({ row: physicalRowNumber(links, rowIndex), issue: "ID_Cotação vazio." });
+        if (!proposalId || !proposalMap[proposalId])
+            report.orphan_records.push({ quote_id: quoteId, proposal_id: proposalId, issue: "Proposta vinculada inexistente." });
+        if (!necessity)
+            report.missing_necessities.push({ quote_id: quoteId, necessity_id: necessityId });
+        if (necessity && (cell(necessities, necessity, "ID_Loja") !== cell(links, row, "ID_Loja") || cell(necessities, necessity, "ID_Item") !== cell(links, row, "ID_Item"))) {
+            report.orphan_records.push({ quote_id: quoteId, necessity_id: necessityId, issue: "ID_Loja/ID_Item do vínculo divergem da necessidade." });
+        }
+        const unitPrice = migrationNumberV1(rawCellV1(links, row, "Preço_Unitário"));
+        const quantity = migrationNumberV1(rawCellV1(links, row, "Quantidade"));
+        const subtotal = migrationNumberV1(rawCellV1(links, row, "Subtotal_Linha"));
+        if (!Number.isFinite(unitPrice) || unitPrice < 0 || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(subtotal) || subtotal < 0 || Math.abs(subtotal - roundMoneyV1(unitPrice * quantity)) > 0.01) {
+            report.invalid_values_totals.push({ quote_id: quoteId, fields: ["Preço_Unitário/Quantidade/Subtotal_Linha"], expected_subtotal: roundMoneyV1(unitPrice * quantity), actual_subtotal: subtotal });
+        }
+    });
+    proposals.rows.forEach((row) => {
+        const proposalId = cell(proposals, row, "ID_Proposta");
+        const supplierId = cell(proposals, row, "ID_Fornecedor");
+        if (!supplierId || !supplierMap[supplierId])
+            report.missing_suppliers.push({ proposal_id: proposalId, supplier_id: supplierId });
+        validateLegacyQuoteStatusV1(proposals, row, proposalId, report);
+        const linked = links.rows.filter((link) => cell(links, link, "ID_Proposta") === proposalId);
+        if (!linked.length)
+            report.orphan_records.push({ proposal_id: proposalId, issue: "Proposta sem vínculos." });
+        const expectedQuantity = linked.reduce((sum, link) => sum + migrationNumberV1(rawCellV1(links, link, "Quantidade"), 0), 0);
+        const expectedSubtotal = roundMoneyV1(linked.reduce((sum, link) => sum + migrationNumberV1(rawCellV1(links, link, "Subtotal_Linha"), 0), 0));
+        const freight = migrationNumberV1(rawCellV1(proposals, row, "Frete_Total"), 0);
+        const otherCosts = migrationNumberV1(rawCellV1(proposals, row, "Outros_Custos_Total"), 0);
+        const actualQuantity = migrationNumberV1(rawCellV1(proposals, row, "Quantidade_Total"));
+        const actualSubtotal = migrationNumberV1(rawCellV1(proposals, row, "Subtotal_Itens"));
+        const actualTotal = migrationNumberV1(rawCellV1(proposals, row, "Valor_Total_Proposta"));
+        const expectedTotal = roundMoneyV1(expectedSubtotal + freight + otherCosts);
+        if (![actualQuantity, actualSubtotal, freight, otherCosts, actualTotal].every(Number.isFinite)
+            || freight < 0 || otherCosts < 0 || Math.abs(actualQuantity - expectedQuantity) > 0.000001
+            || Math.abs(actualSubtotal - expectedSubtotal) > 0.01 || Math.abs(actualTotal - expectedTotal) > 0.01) {
+            report.invalid_values_totals.push({
+                proposal_id: proposalId,
+                fields: ["Quantidade_Total/Subtotal_Itens/Frete_Total/Outros_Custos_Total/Valor_Total_Proposta"],
+                expected_quantity: expectedQuantity,
+                actual_quantity: actualQuantity,
+                expected_subtotal: expectedSubtotal,
+                actual_subtotal: actualSubtotal,
+                expected_total: expectedTotal,
+                actual_total: actualTotal,
+            });
+        }
+    });
+    return finalizeQuoteProposalMigrationPlanV1(report, []);
+}
+function executeQuoteProposalMigrationV1(spreadsheet, plan) {
+    const stamp = Utilities.formatDate(new Date(), APP_CONFIG.timezone, "yyyyMMdd_HHmmss");
+    const quotes = spreadsheet.getSheetByName(APP_CONFIG.sheets.quotes);
+    const history = spreadsheet.getSheetByName(APP_CONFIG.sheets.history);
+    if (!quotes || !history)
+        throw new ApiException("STRUCTURE_ERROR", "As abas 05_COTACOES e 12_HISTORICO são obrigatórias.");
+    let quoteBackup = null;
+    let historyBackup = null;
+    let proposalsSheet = null;
+    try {
+        quoteBackup = quotes.copyTo(spreadsheet).setName(uniqueMigrationSheetNameV1(spreadsheet, `BKP_MIG_V1_${stamp}_05_COTACOES`));
+        historyBackup = history.copyTo(spreadsheet).setName(uniqueMigrationSheetNameV1(spreadsheet, `BKP_MIG_V1_${stamp}_12_HISTORICO`));
+        proposalsSheet = spreadsheet.insertSheet(APP_CONFIG.sheets.quoteProposals);
+        writeQuoteProposalSheetV1(spreadsheet, proposalsSheet, plan.records);
+        rewriteQuoteLinksSheetV1(quotes, quoteBackup, plan.records);
+        appendQuoteProposalMigrationAuditV1(spreadsheet, plan.records);
+        SpreadsheetApp.flush();
+        const validationAfter = buildQuoteProposalMigrationPlanV1(spreadsheet).report;
+        if (!validationAfter.already_migrated || !validationAfter.ready_to_migrate) {
+            throw new ApiException("MIGRATION_POST_VALIDATION_FAILED", "A conferência posterior à migração encontrou inconsistências.", validationAfter);
+        }
+        const result = {
+            status: "migrated",
+            backup_quotes: quoteBackup.getName(),
+            backup_history: historyBackup.getName(),
+            proposals_created: plan.records.length,
+            links_created: plan.records.length,
+            report_before: plan.report,
+            report_after: validationAfter,
+        };
+        console.log(JSON.stringify(result, null, 2));
+        return result;
+    }
+    catch (error) {
+        if (proposalsSheet && spreadsheet.getSheetByName(APP_CONFIG.sheets.quoteProposals))
+            spreadsheet.deleteSheet(proposalsSheet);
+        if (quoteBackup)
+            restoreMigrationSheetV1(quotes, quoteBackup, 1);
+        if (historyBackup)
+            restoreMigrationSheetV1(history, historyBackup, 4);
+        SpreadsheetApp.flush();
+        throw error;
+    }
+}
+function writeQuoteProposalSheetV1(spreadsheet, sheet, records) {
+    ensureMigrationSheetSizeV1(sheet, Math.max(1000, records.length + 4), QUOTE_PROPOSAL_HEADERS_V1.length);
+    sheet.getRange(1, 1).setValue("PROPOSTAS DE COTAÇÃO");
+    sheet.getRange(2, 1).setValue("Uma proposta comercial pode abranger várias necessidades. Valores globais pertencem exclusivamente a esta aba.");
+    sheet.getRange(4, 1, 1, QUOTE_PROPOSAL_HEADERS_V1.length).setValues([QUOTE_PROPOSAL_HEADERS_V1]);
+    if (records.length) {
+        const rows = records.map((record) => [
+            record.proposalId, record.supplierId, record.origin, record.quantity, record.subtotal, record.freight,
+            record.otherCosts, record.total, record.paymentMethod, record.leadTimeDays, record.proposalValidUntil, record.link,
+            record.supplierRating, record.status, record.selected, record.quoteDate, record.responsible, record.notes, record.createdAt,
+            record.createdBy, record.updatedAt, record.updatedBy, record.version, record.active,
+        ]);
+        sheet.getRange(5, 1, rows.length, QUOTE_PROPOSAL_HEADERS_V1.length).setValues(rows);
+    }
+    formatMigrationTableV1(sheet, QUOTE_PROPOSAL_HEADERS_V1.length, records.length);
+    applyQuoteProposalValidationV1(spreadsheet, sheet);
+    sheet.getRange(5, 4, Math.max(records.length, 1), 5).setNumberFormat("R$ #,##0.00");
+    sheet.getRange(5, 4, Math.max(records.length, 1), 1).setNumberFormat("0.00");
+}
+function rewriteQuoteLinksSheetV1(sheet, backup, records) {
+    const lastColumn = Math.max(sheet.getMaxColumns(), QUOTE_LINK_HEADERS_V1.length);
+    ensureMigrationSheetSizeV1(sheet, Math.max(sheet.getMaxRows(), records.length + 4), lastColumn);
+    sheet.getRange(2, 1).setValue("Cada linha vincula uma necessidade a uma proposta comercial. Frete e demais custos globais ficam em 16_PROPOSTAS_COTACAO.");
+    sheet.getRange(4, 1, sheet.getMaxRows() - 3, lastColumn).clear();
+    sheet.getRange(4, 1, 1, QUOTE_LINK_HEADERS_V1.length).setValues([QUOTE_LINK_HEADERS_V1]);
+    if (records.length) {
+        const rows = records.map((record) => [
+            record.quoteId, record.proposalId, record.necessityId, record.storeId, record.itemId, record.unitPrice, record.quantity,
+            record.subtotal, record.createdAt, record.createdBy, record.updatedAt, record.updatedBy, record.version, record.active,
+        ]);
+        sheet.getRange(5, 1, rows.length, QUOTE_LINK_HEADERS_V1.length).setValues(rows);
+    }
+    backup.getRange(4, 1, 1, Math.min(QUOTE_LINK_HEADERS_V1.length, backup.getMaxColumns()))
+        .copyTo(sheet.getRange(4, 1, 1, Math.min(QUOTE_LINK_HEADERS_V1.length, backup.getMaxColumns())), SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+    formatMigrationTableV1(sheet, QUOTE_LINK_HEADERS_V1.length, records.length);
+    sheet.getRange(5, 6, Math.max(records.length, 1), 3).setNumberFormat("R$ #,##0.00");
+    sheet.getRange(5, 7, Math.max(records.length, 1), 1).setNumberFormat("0.00");
+}
+function appendQuoteProposalMigrationAuditV1(spreadsheet, records) {
+    const user = { id: "MIGRACAO_V1", name: "Migração manual V1", email: "EXECUCAO_MANUAL", profile: "ADMINISTRADOR", allowedStoreIds: "TODAS" };
+    const entries = records.flatMap((record) => ([
+        {
+            module: "COTACOES_PROPOSTA",
+            recordId: record.proposalId,
+            changes: [
+                { field: "ID_Fornecedor", previous: "", next: record.supplierId },
+                { field: "Quantidade_Total", previous: "", next: record.quantity },
+                { field: "Valor_Total_Proposta", previous: "", next: record.total },
+                { field: "Status", previous: "", next: record.status },
+            ],
+            reason: `Proposta individual criada a partir da cotação legada ${record.quoteId}.`,
+            action: "MIGRACAO",
+            origin: "MIGRACAO_MANUAL",
+            reference: "QUOTE_PROPOSALS_V1",
+        },
+        {
+            module: "COTACOES_VINCULO",
+            recordId: record.quoteId,
+            changes: [
+                { field: "ID_Proposta", previous: "", next: record.proposalId },
+                { field: "Subtotal_Linha", previous: "", next: record.subtotal },
+            ],
+            reason: `Vínculo preservado para ${record.necessityId}.`,
+            action: "MIGRACAO",
+            origin: "MIGRACAO_MANUAL",
+            reference: "QUOTE_PROPOSALS_V1",
+        },
+    ]));
+    appendAuditBatch(spreadsheet, user, entries);
+}
+function validateLegacyQuoteStatusV1(table, row, recordId, report) {
+    const rawStatus = cell(table, row, "Status");
+    const status = knownQuoteStatusV1(rawStatus);
+    const selectedValue = normalizeHeader(cell(table, row, "Selecionada"));
+    const selectedKnown = ["sim", "nao"].indexOf(selectedValue) >= 0;
+    const selected = selectedValue === "sim";
+    if (!status || !selectedKnown || (status === "SELECIONADA") !== selected) {
+        report.incompatible_statuses.push({ record_id: recordId, status: rawStatus, selected: cell(table, row, "Selecionada"), issue: "Status e Selecionada devem ser conhecidos e consistentes." });
+    }
+}
+function knownQuoteStatusV1(value) {
+    const statuses = { rascunho: "RASCUNHO", emandamento: "EM_ANDAMENTO", recebida: "RECEBIDA", selecionada: "SELECIONADA", descartada: "DESCARTADA", expirada: "EXPIRADA" };
+    return statuses[normalizeHeader(value)] || null;
+}
+function emptyQuoteProposalMigrationReportV1() {
+    return {
+        migration: "QUOTE_PROPOSALS_V1",
+        checked_at: new Date().toISOString(),
+        already_migrated: false,
+        current_quotes: 0,
+        proposals_to_create: 0,
+        links_to_create: 0,
+        duplicate_ids: [],
+        orphan_records: [],
+        invalid_values_totals: [],
+        missing_necessities: [],
+        missing_suppliers: [],
+        incompatible_statuses: [],
+        structural_issues: [],
+        ready_to_migrate: false,
+    };
+}
+function finalizeQuoteProposalMigrationPlanV1(report, records) {
+    report.ready_to_migrate = [
+        report.duplicate_ids,
+        report.orphan_records,
+        report.invalid_values_totals,
+        report.missing_necessities,
+        report.missing_suppliers,
+        report.incompatible_statuses,
+        report.structural_issues,
+    ].every((issues) => issues.length === 0);
+    return { report, records };
+}
+function inspectMigrationHeadersV1(sheet, keyHeader) {
+    const lastColumn = Math.max(sheet.getLastColumn(), 1);
+    const rowCount = Math.min(Math.max(sheet.getLastRow(), 1), 10);
+    const rows = sheet.getRange(1, 1, rowCount, lastColumn).getValues();
+    const key = normalizeHeader(keyHeader);
+    const offset = rows.findIndex((row) => row.some((value) => normalizeHeader(value) === key));
+    return offset < 0 ? { headerRow: null, normalizedHeaders: [] } : { headerRow: offset + 1, normalizedHeaders: rows[offset].map(normalizeHeader) };
+}
+function findDuplicateMigrationIdsV1(table, header, sheetName) {
+    const idIndex = columnIndex(table, header);
+    const occurrences = {};
+    table.rows.forEach((row, index) => {
+        const id = String(row[idIndex] || "").trim();
+        if (id)
+            (occurrences[id] || (occurrences[id] = [])).push(physicalRowNumber(table, index));
+    });
+    return Object.keys(occurrences).filter((id) => occurrences[id].length > 1).map((id) => ({ sheet: sheetName, id, rows: occurrences[id] }));
+}
+function uniqueMigrationRowMapV1(table, header) {
+    const idIndex = columnIndex(table, header);
+    const result = {};
+    table.rows.forEach((row) => {
+        const id = String(row[idIndex] || "").trim();
+        if (id && !result[id])
+            result[id] = row;
+    });
+    return result;
+}
+function legacyProposalIdsV1(table) {
+    const used = {};
+    let fallback = 1;
+    return table.rows.map((row) => {
+        const quoteId = cell(table, row, "ID_Cotação");
+        const match = quoteId.match(/^COT-(\d+)$/);
+        let candidate = match ? `PRP-${String(Number(match[1])).padStart(6, "0")}` : "";
+        while (!candidate || used[candidate])
+            candidate = `PRP-${String(fallback++).padStart(6, "0")}`;
+        used[candidate] = true;
+        return candidate;
+    });
+}
+function rawCellV1(table, row, header) {
+    const index = table.normalizedHeaders.indexOf(normalizeHeader(header));
+    return index < 0 ? "" : row[index];
+}
+function migrationNumberV1(value, emptyDefault = Number.NaN) {
+    if (value === "" || value === null || value === undefined)
+        return emptyDefault;
+    return typeof value === "number" ? value : Number(value);
+}
+function roundMoneyV1(value) {
+    return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+function uniqueMigrationSheetNameV1(spreadsheet, preferred) {
+    const base = preferred.slice(0, 95);
+    let candidate = base;
+    let suffix = 1;
+    while (spreadsheet.getSheetByName(candidate))
+        candidate = `${base}_${suffix++}`.slice(0, 99);
+    return candidate;
+}
+function ensureMigrationSheetSizeV1(sheet, rows, columns) {
+    if (sheet.getMaxRows() < rows)
+        sheet.insertRowsAfter(sheet.getMaxRows(), rows - sheet.getMaxRows());
+    if (sheet.getMaxColumns() < columns)
+        sheet.insertColumnsAfter(sheet.getMaxColumns(), columns - sheet.getMaxColumns());
+}
+function formatMigrationTableV1(sheet, columns, dataRows) {
+    const dark = "#17375E";
+    const header = "#1F4E78";
+    sheet.getRange(1, 1, 1, columns).setBackground(dark).setFontColor("#FFFFFF").setFontWeight("bold").setFontSize(16);
+    sheet.getRange(2, 1, 1, columns).setBackground("#FFF2CC").setFontStyle("italic").setWrap(true);
+    sheet.getRange(4, 1, 1, columns).setBackground(header).setFontColor("#FFFFFF").setFontWeight("bold").setHorizontalAlignment("center").setWrap(true);
+    if (dataRows)
+        sheet.getRange(5, 1, dataRows, columns).setVerticalAlignment("middle");
+    sheet.setFrozenRows(4);
+    sheet.autoResizeColumns(1, columns);
+}
+function applyQuoteProposalValidationV1(spreadsheet, sheet) {
+    const lists = spreadsheet.getSheetByName(APP_CONFIG.sheets.lists);
+    if (!lists)
+        throw new ApiException("STRUCTURE_ERROR", "Aba 14_LISTAS não encontrada para aplicar validações.");
+    const rows = Math.max(sheet.getMaxRows() - 4, 1);
+    const validation = (range) => SpreadsheetApp.newDataValidation().requireValueInRange(range, true).setAllowInvalid(false).build();
+    sheet.getRange(5, 3, rows, 1).setDataValidation(validation(lists.getRange("F5:F10")));
+    sheet.getRange(5, 9, rows, 1).setDataValidation(validation(lists.getRange("G5:G10")));
+    sheet.getRange(5, 14, rows, 1).setDataValidation(validation(lists.getRange("C5:C10")));
+    sheet.getRange(5, 15, rows, 1).setDataValidation(validation(lists.getRange("I5:I6")));
+}
+function restoreMigrationSheetV1(target, backup, startRow) {
+    ensureMigrationSheetSizeV1(target, backup.getMaxRows(), backup.getMaxColumns());
+    const rowCount = target.getMaxRows() - startRow + 1;
+    target.getRange(startRow, 1, rowCount, target.getMaxColumns()).clear();
+    backup.getRange(startRow, 1, backup.getMaxRows() - startRow + 1, backup.getMaxColumns())
+        .copyTo(target.getRange(startRow, 1, backup.getMaxRows() - startRow + 1, backup.getMaxColumns()), SpreadsheetApp.CopyPasteType.PASTE_NORMAL, false);
 }
 function diagnoseSpreadsheet() {
     return buildTechnicalStatus(openConfiguredSpreadsheet());

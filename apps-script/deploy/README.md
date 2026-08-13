@@ -27,6 +27,8 @@ Em **Configurações do projeto → Propriedades do script**:
 | `GOOGLE_CLIENT_ID` | `636511329976-k25aj1bnqrn7ncltfsv526d0q467jdou.apps.googleusercontent.com` |
 | `PUBLIC_READ_ACCESS` | `SIM` |
 
+`ALLOW_MIGRATE_QUOTE_PROPOSALS_V1` não é permanente. Crie-a com valor `SIM` somente depois de `prevalidateQuoteProposalsV1()` retornar `ready_to_migrate: true`. A migração apaga a propriedade ao terminar. O roteiro completo está em `docs/MIGRACAO_PROPOSTAS_COTACAO_V1.md`.
+
 `ALLOW_SETUP` não é permanente. Use `ALLOW_SETUP=SIM` somente durante a preparação inicial descrita abaixo; a própria função o apaga ao concluir.
 
 ## Serviços e APIs
