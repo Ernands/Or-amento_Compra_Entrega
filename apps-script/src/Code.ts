@@ -112,6 +112,21 @@ interface QuoteProposalMigrationPlanV1 {
   records: LegacyQuoteMigrationRecordV1[];
 }
 
+interface GroupedQuoteScopeLineV1 {
+  necessityId: string;
+  storeId: string;
+  itemId: string;
+  quantity: number;
+  necessityRow: unknown[];
+  necessityRowIndex: number;
+}
+
+interface AtomicSheetWriteV1 {
+  range: GoogleAppsScript.Spreadsheet.Range;
+  previous: unknown[][];
+  next: unknown[][];
+}
+
 interface QuoteValidatedValues {
   supplierId: string;
   origin: string;
@@ -244,13 +259,20 @@ function dispatchAuthenticatedAction(action: string, payload: Record<string, unk
     case "createSupplier":
       return createSupplier(spreadsheet, user, payload);
     case "createQuote":
-      return createQuote(spreadsheet, user, payload);
     case "updateQuote":
-      return updateQuote(spreadsheet, user, payload);
     case "deleteQuote":
-      return deleteQuote(spreadsheet, user, payload);
     case "selectQuote":
-      return selectQuote(spreadsheet, user, payload);
+      throw new ApiException("CLIENT_UPDATE_REQUIRED", "Atualize o frontend para usar o fluxo de propostas agrupadas.");
+    case "createQuoteProposal":
+      return createQuoteProposal(spreadsheet, user, payload);
+    case "updateQuoteProposal":
+      return updateQuoteProposal(spreadsheet, user, payload);
+    case "reopenQuoteProposal":
+      return reopenQuoteProposal(spreadsheet, user, payload);
+    case "deleteQuoteProposal":
+      return deleteQuoteProposal(spreadsheet, user, payload);
+    case "selectQuoteProposal":
+      return selectQuoteProposal(spreadsheet, user, payload);
     case "updateNecessity":
       return updateNecessity(spreadsheet, user, payload);
     case "updateStore":
@@ -308,6 +330,12 @@ function buildPublicBootstrap(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsh
 }
 
 function buildPublicQuotesWorkspace(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet): unknown {
+  return quoteSchemaMode(spreadsheet) === "GROUPED"
+    ? buildGroupedPublicQuotesWorkspace(spreadsheet)
+    : buildLegacyPublicQuotesWorkspace(spreadsheet);
+}
+
+function buildLegacyPublicQuotesWorkspace(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet): unknown {
   const quotesTable = readTable(spreadsheet, APP_CONFIG.sheets.quotes, ["ID_Cotação", "ID_Necessidade", "ID_Loja", "ID_Item", "ID_Fornecedor", "Quantidade", "Valor_Total", "Prazo_Dias", "Status", "ativo"]);
   const activeRows = quotesTable.rows
     .filter((row) => isActiveQuoteRow(quotesTable, row))
@@ -317,18 +345,28 @@ function buildPublicQuotesWorkspace(spreadsheet: GoogleAppsScript.Spreadsheet.Sp
   const publicSupplierIds = Object.fromEntries(supplierIds.map((id, index) => [id, `PUB-FOR-${String(index + 1).padStart(3, "0")}`]));
   return {
     suppliers: supplierIds.map((id, index) => ({ id: publicSupplierIds[id], name: `Fornecedor ${String(index + 1).padStart(2, "0")}` })),
-    quotes: activeRows.map((row, index) => ({
-      id: `PUB-COT-${String(index + 1).padStart(6, "0")}`,
-      necessityId: cell(quotesTable, row, "ID_Necessidade"),
-      storeId: cell(quotesTable, row, "ID_Loja"),
-      itemId: cell(quotesTable, row, "ID_Item"),
-      supplierId: publicSupplierIds[cell(quotesTable, row, "ID_Fornecedor")],
-      quantity: Number(cell(quotesTable, row, "Quantidade") || 0),
-      total: Number(cell(quotesTable, row, "Valor_Total") || 0),
-      leadTimeDays: Number(cell(quotesTable, row, "Prazo_Dias") || 0),
-      status: normalizeQuoteStatus(cell(quotesTable, row, "Status")),
-      selected: isYes(cell(quotesTable, row, "Selecionada")),
-    })),
+    quotes: activeRows.map((row, index) => {
+      const id = `PUB-COT-${String(index + 1).padStart(6, "0")}`;
+      const necessityId = cell(quotesTable, row, "ID_Necessidade");
+      const storeId = cell(quotesTable, row, "ID_Loja");
+      const itemId = cell(quotesTable, row, "ID_Item");
+      const quantity = Number(cell(quotesTable, row, "Quantidade") || 0);
+      return {
+        id,
+        itemId,
+        supplierId: publicSupplierIds[cell(quotesTable, row, "ID_Fornecedor")],
+        lines: [{ id: `PUB-LIN-${String(index + 1).padStart(6, "0")}`, proposalId: id, necessityId, storeId, itemId, quantity }],
+        necessityIds: [necessityId],
+        storeIds: [storeId],
+        scopeSignature: quoteScopeSignatureV1([{ necessityId, itemId, quantity }]),
+        quantityTotal: quantity,
+        total: Number(cell(quotesTable, row, "Valor_Total") || 0),
+        leadTimeDays: Number(cell(quotesTable, row, "Prazo_Dias") || 0),
+        status: normalizeQuoteStatus(cell(quotesTable, row, "Status")),
+        selected: isYes(cell(quotesTable, row, "Selecionada")),
+      };
+    }),
+    schemaMode: "LEGACY",
     checkedAt: new Date().toISOString(),
   };
 }
@@ -370,6 +408,12 @@ function buildBootstrap(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet, u
 }
 
 function buildQuotesWorkspace(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet, user: SystemUser): unknown {
+  return quoteSchemaMode(spreadsheet) === "GROUPED"
+    ? buildGroupedQuotesWorkspace(spreadsheet, user)
+    : buildLegacyQuotesWorkspace(spreadsheet, user);
+}
+
+function buildLegacyQuotesWorkspace(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet, user: SystemUser): unknown {
   assertModulePermission(spreadsheet, user, "Cotações", "Visualizar");
   const suppliersTable = readTable(spreadsheet, APP_CONFIG.sheets.suppliers, ["ID_Fornecedor", "Fornecedor", "Ativo", "version"]);
   const quotesTable = readTable(spreadsheet, APP_CONFIG.sheets.quotes, ["ID_Cotação", "ID_Necessidade", "ID_Loja", "ID_Item", "ID_Fornecedor", "Valor_Total", "Status", "version", "ativo"]);
@@ -386,14 +430,215 @@ function buildQuotesWorkspace(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsh
     options,
     permissions: {
       view: hasModulePermission(permissionTable, user, "Cotações", "Visualizar"),
+      create: false,
+      edit: false,
+      delete: false,
+      select: false,
+      createSupplier: hasModulePermission(permissionTable, user, "Fornecedores", "Criar"),
+    },
+    schemaMode: "LEGACY",
+    checkedAt: new Date().toISOString(),
+  };
+}
+
+function quoteSchemaMode(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet): "LEGACY" | "GROUPED" {
+  const quotes = spreadsheet.getSheetByName(APP_CONFIG.sheets.quotes);
+  if (!quotes) throw new ApiException("STRUCTURE_ERROR", "Aba 05_COTACOES não encontrada.");
+  const hasProposalId = inspectMigrationHeadersV1(quotes, "ID_Cotação").normalizedHeaders.indexOf(normalizeHeader("ID_Proposta")) >= 0;
+  const hasProposalSheet = Boolean(spreadsheet.getSheetByName(APP_CONFIG.sheets.quoteProposals));
+  if (hasProposalId !== hasProposalSheet) {
+    throw new ApiException("MIGRATION_PARTIAL", "Estrutura parcial detectada. ID_Proposta e 16_PROPOSTAS_COTACAO devem existir juntos.");
+  }
+  return hasProposalId ? "GROUPED" : "LEGACY";
+}
+
+function assertGroupedQuoteSchemaV1(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet): void {
+  if (quoteSchemaMode(spreadsheet) !== "GROUPED") {
+    throw new ApiException(
+      "QUOTE_MIGRATION_REQUIRED",
+      "As propostas estão em modo de pré-migração e permanecem somente leitura. Execute a migração manual aprovada antes de gravar.",
+    );
+  }
+}
+
+function rejectLegacyQuoteMutationV1(): never {
+  throw new ApiException("CLIENT_UPDATE_REQUIRED", "O fluxo legado de gravação foi desativado. Use as ações de propostas agrupadas.");
+}
+
+function buildGroupedQuotesWorkspace(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet, user: SystemUser): unknown {
+  assertModulePermission(spreadsheet, user, "Cotações", "Visualizar");
+  const suppliersTable = readTable(spreadsheet, APP_CONFIG.sheets.suppliers, ["ID_Fornecedor", "Fornecedor", "Ativo", "version"]);
+  const proposalsTable = readTable(spreadsheet, APP_CONFIG.sheets.quoteProposals, QUOTE_PROPOSAL_HEADERS_V1);
+  const linesTable = readTable(spreadsheet, APP_CONFIG.sheets.quotes, QUOTE_LINK_HEADERS_V1);
+  const routesTable = readTable(spreadsheet, APP_CONFIG.sheets.routes, ["ID_Rota", "ID_Item", "Ordem", "Origem_Destino", "Ativo"]);
+  const necessitiesTable = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "ID_Loja", "ID_Item"]);
+  const permissionTable = readTable(spreadsheet, APP_CONFIG.sheets.permissions, ["Perfil", "Módulo", "Visualizar", "Criar", "Editar", "Excluir"]);
+  const allowedNeeds = necessitiesTable.rows.filter((row) => isStoreAllowed(user, cell(necessitiesTable, row, "ID_Loja")));
+  const allowedItemIds = Object.fromEntries(allowedNeeds.map((row) => [cell(necessitiesTable, row, "ID_Item"), true]));
+  const activeLines = linesTable.rows.filter((row) => isActiveQuoteRow(linesTable, row));
+  const proposals = proposalsTable.rows.flatMap((row) => {
+    if (!isActiveQuoteRow(proposalsTable, row)) return [];
+    const proposalId = cell(proposalsTable, row, "ID_Proposta");
+    const linked = activeLines.filter((line) => cell(linesTable, line, "ID_Proposta") === proposalId);
+    if (!linked.length || !linked.every((line) => isStoreAllowed(user, cell(linesTable, line, "ID_Loja")))) return [];
+    return [mapGroupedQuoteProposalV1(proposalsTable, row, linesTable, linked)];
+  });
+  return {
+    suppliers: suppliersTable.rows.map((row) => mapSupplier(suppliersTable, row)),
+    quotes: proposals,
+    routes: routesTable.rows.filter((row) => Boolean(allowedItemIds[cell(routesTable, row, "ID_Item")])).map((row) => mapPurchaseRoute(routesTable, row)),
+    options: readQuoteOptions(spreadsheet),
+    permissions: {
+      view: hasModulePermission(permissionTable, user, "Cotações", "Visualizar"),
       create: hasModulePermission(permissionTable, user, "Cotações", "Criar"),
       edit: hasModulePermission(permissionTable, user, "Cotações", "Editar"),
       delete: hasModulePermission(permissionTable, user, "Cotações", "Excluir"),
       select: hasModulePermission(permissionTable, user, "Cotações", "Editar"),
       createSupplier: hasModulePermission(permissionTable, user, "Fornecedores", "Criar"),
     },
+    schemaMode: "GROUPED",
     checkedAt: new Date().toISOString(),
   };
+}
+
+function buildGroupedPublicQuotesWorkspace(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet): unknown {
+  const proposalsTable = readTable(spreadsheet, APP_CONFIG.sheets.quoteProposals, QUOTE_PROPOSAL_HEADERS_V1);
+  const linesTable = readTable(spreadsheet, APP_CONFIG.sheets.quotes, QUOTE_LINK_HEADERS_V1);
+  const activeLines = linesTable.rows.filter((row) => isActiveQuoteRow(linesTable, row));
+  const source = proposalsTable.rows.flatMap((row) => {
+    if (!isActiveQuoteRow(proposalsTable, row)) return [];
+    const linked = activeLines.filter((line) => cell(linesTable, line, "ID_Proposta") === cell(proposalsTable, row, "ID_Proposta"));
+    return linked.length ? [mapGroupedQuoteProposalV1(proposalsTable, row, linesTable, linked)] : [];
+  });
+  const supplierIds = Array.from(new Set(source.map((proposal) => proposal.supplierId))).sort();
+  const publicSupplierIds = Object.fromEntries(supplierIds.map((id, index) => [id, `PUB-FOR-${String(index + 1).padStart(3, "0")}`]));
+  return {
+    suppliers: supplierIds.map((id, index) => ({ id: publicSupplierIds[id], name: `Fornecedor ${String(index + 1).padStart(2, "0")}` })),
+    quotes: source.map((proposal, proposalIndex) => {
+      const id = `PUB-PRP-${String(proposalIndex + 1).padStart(6, "0")}`;
+      const lines = proposal.lines.map((line: ReturnType<typeof mapGroupedQuoteLineV1>, lineIndex: number) => ({
+        id: `PUB-LIN-${String(proposalIndex + 1).padStart(4, "0")}-${String(lineIndex + 1).padStart(3, "0")}`,
+        proposalId: id,
+        necessityId: line.necessityId,
+        storeId: line.storeId,
+        itemId: line.itemId,
+        quantity: line.quantity,
+      }));
+      return {
+        id,
+        itemId: proposal.itemId,
+        supplierId: publicSupplierIds[proposal.supplierId],
+        lines,
+        necessityIds: proposal.necessityIds,
+        storeIds: proposal.storeIds,
+        scopeSignature: proposal.scopeSignature,
+        quantityTotal: proposal.quantityTotal,
+        total: proposal.total,
+        leadTimeDays: proposal.leadTimeDays,
+        status: proposal.status,
+        selected: proposal.selected,
+      };
+    }),
+    schemaMode: "GROUPED",
+    checkedAt: new Date().toISOString(),
+  };
+}
+
+function mapLegacyQuoteProposal(table: SheetTable, row: unknown[]): unknown {
+  const legacy = mapQuote(table, row);
+  const line = {
+    id: legacy.id,
+    proposalId: legacy.id,
+    necessityId: legacy.necessityId,
+    storeId: legacy.storeId,
+    itemId: legacy.itemId,
+    unitPrice: legacy.unitPrice,
+    quantity: legacy.quantity,
+    subtotal: roundMoneyV1(legacy.unitPrice * legacy.quantity),
+    version: legacy.version,
+    active: legacy.active,
+  };
+  return {
+    id: legacy.id,
+    itemId: legacy.itemId,
+    supplierId: legacy.supplierId,
+    lines: [line],
+    necessityIds: [legacy.necessityId],
+    storeIds: [legacy.storeId],
+    scopeSignature: quoteScopeSignatureV1([line]),
+    origin: legacy.origin,
+    unitPrice: legacy.unitPrice,
+    quantityTotal: legacy.quantity,
+    subtotalItems: line.subtotal,
+    freight: legacy.freight,
+    otherCosts: legacy.otherCosts,
+    total: legacy.total,
+    paymentMethod: legacy.paymentMethod,
+    leadTimeDays: legacy.leadTimeDays,
+    proposalValidUntil: legacy.proposalValidUntil,
+    link: legacy.link,
+    supplierRating: legacy.supplierRating,
+    status: legacy.status,
+    selected: legacy.selected,
+    quoteDate: legacy.quoteDate,
+    responsible: legacy.responsible,
+    notes: legacy.notes,
+    version: legacy.version,
+    active: legacy.active,
+  };
+}
+
+function mapGroupedQuoteProposalV1(proposals: SheetTable, row: unknown[], lines: SheetTable, linkedRows: unknown[][]) {
+  const mappedLines = linkedRows.map((line) => mapGroupedQuoteLineV1(lines, line));
+  const itemIds = Array.from(new Set(mappedLines.map((line) => line.itemId)));
+  return {
+    id: cell(proposals, row, "ID_Proposta"),
+    itemId: itemIds.length === 1 ? itemIds[0] : "",
+    supplierId: cell(proposals, row, "ID_Fornecedor"),
+    lines: mappedLines,
+    necessityIds: mappedLines.map((line) => line.necessityId),
+    storeIds: mappedLines.map((line) => line.storeId),
+    scopeSignature: quoteScopeSignatureV1(mappedLines),
+    origin: cell(proposals, row, "Origem_Cotação"),
+    unitPrice: mappedLines[0]?.unitPrice || 0,
+    quantityTotal: Number(cell(proposals, row, "Quantidade_Total") || 0),
+    subtotalItems: Number(cell(proposals, row, "Subtotal_Itens") || 0),
+    freight: Number(cell(proposals, row, "Frete_Total") || 0),
+    otherCosts: Number(cell(proposals, row, "Outros_Custos_Total") || 0),
+    total: Number(cell(proposals, row, "Valor_Total_Proposta") || 0),
+    paymentMethod: cell(proposals, row, "Forma_Pagamento"),
+    leadTimeDays: Number(cell(proposals, row, "Prazo_Dias") || 0),
+    proposalValidUntil: dateCell(proposals, row, "Validade_Proposta"),
+    link: cell(proposals, row, "Link"),
+    supplierRating: optionalNumberCellV1(proposals, row, "Nota_Fornecedor"),
+    status: normalizeQuoteStatus(cell(proposals, row, "Status")),
+    selected: isYes(cell(proposals, row, "Selecionada")),
+    quoteDate: dateCell(proposals, row, "Data_Cotação"),
+    responsible: cell(proposals, row, "Responsável"),
+    notes: cell(proposals, row, "Observações"),
+    version: Number(cell(proposals, row, "version") || 1),
+    active: isActiveQuoteRow(proposals, row),
+  };
+}
+
+function mapGroupedQuoteLineV1(table: SheetTable, row: unknown[]) {
+  return {
+    id: cell(table, row, "ID_Cotação"),
+    proposalId: cell(table, row, "ID_Proposta"),
+    necessityId: cell(table, row, "ID_Necessidade"),
+    storeId: cell(table, row, "ID_Loja"),
+    itemId: cell(table, row, "ID_Item"),
+    unitPrice: Number(cell(table, row, "Preço_Unitário") || 0),
+    quantity: Number(cell(table, row, "Quantidade") || 0),
+    subtotal: Number(cell(table, row, "Subtotal_Linha") || 0),
+    version: Number(cell(table, row, "version") || 1),
+    active: isActiveQuoteRow(table, row),
+  };
+}
+
+function optionalNumberCellV1(table: SheetTable, row: unknown[], header: string): number | null {
+  const value = cell(table, row, header);
+  return value === "" ? null : Number(value);
 }
 
 function createSupplier(
@@ -436,11 +681,548 @@ function createSupplier(
   });
 }
 
+function createQuoteProposal(
+  spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet,
+  user: SystemUser,
+  payload: Record<string, unknown>,
+): unknown {
+  assertModulePermission(spreadsheet, user, "Cotações", "Criar");
+  return withScriptLock(() => {
+    assertGroupedQuoteSchemaV1(spreadsheet);
+    const proposals = readTable(spreadsheet, APP_CONFIG.sheets.quoteProposals, QUOTE_PROPOSAL_HEADERS_V1);
+    const lines = readTable(spreadsheet, APP_CONFIG.sheets.quotes, QUOTE_LINK_HEADERS_V1);
+    const necessities = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "ID_Loja", "ID_Item", "Qtd_Planejada", "Status", "version", "updated_at", "updated_by"]);
+    const suppliers = readTable(spreadsheet, APP_CONFIG.sheets.suppliers, ["ID_Fornecedor", "Nota_Fornecedor", "Ativo"]);
+    const scope = resolveGroupedQuoteScopeV1(user, payload.necessityIds, necessities);
+    const supplier = requireActiveSupplierV1(suppliers, payload.supplierId);
+    const quantityTotal = scope.reduce((sum, line) => sum + line.quantity, 0);
+    const values = validateGroupedQuoteValuesV1(payload, readQuoteOptions(spreadsheet), quantityTotal);
+    const proposalId = nextInternalId(proposals, "ID_Proposta", "PRP", 6);
+    const lineIds = nextInternalIdsV1(lines, "ID_Cotação", "COT", 6, scope.length);
+    const now = new Date();
+    const proposalRow = Array(proposals.headers.length).fill("");
+    writeGroupedProposalRowV1(proposals, proposalRow, proposalId, supplier, suppliers, values, scope, user, now);
+    const lineRows = scope.map((scopeLine, index) => buildGroupedLineRowV1(lines, lineIds[index], proposalId, scopeLine, values.unitPrice, user, now));
+    const proposalRange = proposals.sheet.getRange(findFirstWritableRow(proposals, "ID_Proposta"), 1, 1, proposals.headers.length);
+    const linesRange = lines.sheet.getRange(findFirstWritableRow(lines, "ID_Cotação", lineRows.length), 1, lineRows.length, lines.headers.length);
+    const writes: AtomicSheetWriteV1[] = [
+      { range: proposalRange, previous: restorableMatrixV1(proposalRange), next: [proposalRow] },
+      { range: linesRange, previous: restorableMatrixV1(linesRange), next: lineRows },
+    ];
+    const audits: AuditEntry[] = [{
+      module: "COTACOES_PROPOSTA",
+      recordId: proposalId,
+      changes: [
+        { field: "ID_Fornecedor", previous: "", next: values.supplierId },
+        { field: "Assinatura_Escopo", previous: "", next: quoteScopeSignatureV1(scope) },
+        { field: "Quantidade_Total", previous: "", next: quantityTotal },
+        { field: "Valor_Total_Proposta", previous: "", next: values.total },
+        { field: "Status", previous: "", next: values.status },
+      ],
+      reason: values.notes || "Proposta agrupada criada.",
+      action: "CRIACAO",
+    }];
+    scope.forEach((scopeLine, index) => {
+      audits.push({
+        module: "COTACOES_VINCULO",
+        recordId: lineIds[index],
+        changes: [
+          { field: "ID_Proposta", previous: "", next: proposalId },
+          { field: "ID_Necessidade", previous: "", next: scopeLine.necessityId },
+          { field: "Quantidade", previous: "", next: scopeLine.quantity },
+          { field: "Subtotal_Linha", previous: "", next: roundMoneyV1(scopeLine.quantity * values.unitPrice) },
+        ],
+        reason: "Necessidade incluída na proposta agrupada.",
+        action: "CRIACAO",
+      });
+      if (normalizeStatus(cell(necessities, scopeLine.necessityRow, "Status")) === "NAO_INICIADO") {
+        appendNecessityStatusWriteV1(necessities, scopeLine, "EM_COTACAO", user, now, writes, audits, `Incluída na proposta ${proposalId}.`);
+      }
+    });
+    performAtomicWritesV1(spreadsheet, user, writes, audits);
+    return { quote: mapGroupedQuoteProposalV1(proposals, proposalRow, lines, lineRows) };
+  });
+}
+
+function updateQuoteProposal(
+  spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet,
+  user: SystemUser,
+  payload: Record<string, unknown>,
+): unknown {
+  assertModulePermission(spreadsheet, user, "Cotações", "Editar");
+  return withScriptLock(() => {
+    assertGroupedQuoteSchemaV1(spreadsheet);
+    const id = requireString(payload.id, "id");
+    const expectedVersion = requirePositiveInteger(payload.version, "version");
+    const changes = requireChanges(payload.changes, ["necessityIds", "supplierId", "origin", "unitPrice", "freight", "otherCosts", "paymentMethod", "leadTimeDays", "proposalValidUntil", "link", "status", "quoteDate", "notes"]);
+    const proposals = readTable(spreadsheet, APP_CONFIG.sheets.quoteProposals, QUOTE_PROPOSAL_HEADERS_V1);
+    const found = findVersionedRow(proposals, "ID_Proposta", id, expectedVersion, "Proposta");
+    if (!isActiveQuoteRow(proposals, found.current)) throw new ApiException("LOCKED_RECORD", "A proposta está inativa.");
+    const currentStatus = normalizeQuoteStatus(cell(proposals, found.current, "Status"));
+    if (currentStatus === "SELECIONADA" || isYes(cell(proposals, found.current, "Selecionada"))) throw new ApiException("LOCKED_RECORD", "A proposta selecionada está bloqueada para alterações.");
+    if (currentStatus === "RECEBIDA") throw new ApiException("REOPEN_REQUIRED", "Reabra explicitamente a proposta recebida antes de alterar escopo ou valores.");
+    if (["RASCUNHO", "EM_ANDAMENTO"].indexOf(currentStatus) < 0) throw new ApiException("LOCKED_RECORD", "O status atual não permite edição.");
+
+    const lines = readTable(spreadsheet, APP_CONFIG.sheets.quotes, QUOTE_LINK_HEADERS_V1);
+    const currentEntries = lines.rows.map((row, rowIndex) => ({ row, rowIndex }))
+      .filter((entry) => isActiveQuoteRow(lines, entry.row) && cell(lines, entry.row, "ID_Proposta") === id);
+    assertGroupedProposalScopeAllowedV1(user, lines, currentEntries.map((entry) => entry.row));
+    const necessities = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "ID_Loja", "ID_Item", "Qtd_Planejada", "Status", "version", "updated_at", "updated_by"]);
+    const scope = resolveGroupedQuoteScopeV1(user, changes.necessityIds, necessities);
+    const suppliers = readTable(spreadsheet, APP_CONFIG.sheets.suppliers, ["ID_Fornecedor", "Nota_Fornecedor", "Ativo"]);
+    const supplier = requireActiveSupplierV1(suppliers, changes.supplierId);
+    const quantityTotal = scope.reduce((sum, line) => sum + line.quantity, 0);
+    const values = validateGroupedQuoteValuesV1(changes, readQuoteOptions(spreadsheet), quantityTotal);
+    const now = new Date();
+    const writes: AtomicSheetWriteV1[] = [];
+    const audits: AuditEntry[] = [];
+    const headerChanges: Array<{ field: string; previous: unknown; next: unknown }> = [];
+    const previousScope = quoteScopeSignatureV1(currentEntries.map((entry) => mapGroupedQuoteLineV1(lines, entry.row)));
+    const nextScope = quoteScopeSignatureV1(scope);
+    applyChange(proposals, found.current, "ID_Fornecedor", values.supplierId, (value) => value, headerChanges);
+    applyChange(proposals, found.current, "Origem_Cotação", values.origin, (value) => value, headerChanges);
+    applyChange(proposals, found.current, "Quantidade_Total", quantityTotal, (value) => value, headerChanges);
+    applyChange(proposals, found.current, "Subtotal_Itens", roundMoneyV1(quantityTotal * values.unitPrice), (value) => value, headerChanges);
+    applyChange(proposals, found.current, "Frete_Total", values.freight, (value) => value, headerChanges);
+    applyChange(proposals, found.current, "Outros_Custos_Total", values.otherCosts, (value) => value, headerChanges);
+    applyChange(proposals, found.current, "Valor_Total_Proposta", values.total, (value) => value, headerChanges);
+    applyChange(proposals, found.current, "Forma_Pagamento", values.paymentMethod, (value) => value, headerChanges);
+    applyChange(proposals, found.current, "Prazo_Dias", values.leadTimeDays, (value) => value, headerChanges);
+    applyChange(proposals, found.current, "Validade_Proposta", values.proposalValidUntil, (value) => value, headerChanges);
+    applyChange(proposals, found.current, "Link", values.link, (value) => value, headerChanges);
+    applyChange(proposals, found.current, "Nota_Fornecedor", cell(suppliers, supplier, "Nota_Fornecedor"), (value) => value, headerChanges);
+    applyChange(proposals, found.current, "Status", quoteStatusToSheet(values.status), (value) => value, headerChanges);
+    applyChange(proposals, found.current, "Data_Cotação", values.quoteDate, (value) => value, headerChanges);
+    applyChange(proposals, found.current, "Observações", values.notes, (value) => value, headerChanges);
+    if (previousScope !== nextScope) headerChanges.push({ field: "Assinatura_Escopo", previous: previousScope, next: nextScope });
+    const previousUnitPrice = currentEntries.length ? Number(cell(lines, currentEntries[0].row, "Preço_Unitário") || 0) : 0;
+    if (Math.abs(previousUnitPrice - values.unitPrice) > 0.000001) headerChanges.push({ field: "Preço_Unitário", previous: previousUnitPrice, next: values.unitPrice });
+
+    const currentByNeed: Record<string, { row: unknown[]; rowIndex: number }> = {};
+    currentEntries.forEach((entry) => {
+      const necessityId = cell(lines, entry.row, "ID_Necessidade");
+      if (currentByNeed[necessityId]) throw new ApiException("DUPLICATE_RECORD", `A necessidade ${necessityId} está duplicada na proposta ${id}.`);
+      currentByNeed[necessityId] = entry;
+    });
+    const targetNeedIds = Object.fromEntries(scope.map((line) => [line.necessityId, true]));
+    const resultingLineRows: unknown[][] = [];
+    const addedScope = scope.filter((scopeLine) => !currentByNeed[scopeLine.necessityId]);
+    const addedIds = nextInternalIdsV1(lines, "ID_Cotação", "COT", 6, addedScope.length);
+    let addedIndex = 0;
+    scope.forEach((scopeLine) => {
+      const existing = currentByNeed[scopeLine.necessityId];
+      if (existing) {
+        const next = existing.row.slice();
+        const lineChanges: Array<{ field: string; previous: unknown; next: unknown }> = [];
+        applyChange(lines, next, "Preço_Unitário", values.unitPrice, (value) => value, lineChanges);
+        applyChange(lines, next, "Quantidade", scopeLine.quantity, (value) => value, lineChanges);
+        applyChange(lines, next, "Subtotal_Linha", roundMoneyV1(scopeLine.quantity * values.unitPrice), (value) => value, lineChanges);
+        if (lineChanges.length) {
+          setCell(lines, next, "version", Number(cell(lines, next, "version") || 1) + 1);
+          setCell(lines, next, "updated_at", now);
+          setCell(lines, next, "updated_by", user.id);
+          const range = lines.sheet.getRange(physicalRowNumber(lines, existing.rowIndex), 1, 1, lines.headers.length);
+          writes.push({ range, previous: restorableMatrixV1(range), next: [next] });
+          audits.push({ module: "COTACOES_VINCULO", recordId: cell(lines, next, "ID_Cotação"), changes: lineChanges, reason: String(payload.reason || "Vínculo da proposta atualizado."), action: "ALTERACAO" });
+        }
+        resultingLineRows.push(next);
+      } else {
+        const lineId = addedIds[addedIndex++];
+        const next = buildGroupedLineRowV1(lines, lineId, id, scopeLine, values.unitPrice, user, now);
+        resultingLineRows.push(next);
+        audits.push({ module: "COTACOES_VINCULO", recordId: lineId, changes: [{ field: "ID_Necessidade", previous: "", next: scopeLine.necessityId }], reason: "Necessidade adicionada ao escopo da proposta.", action: "CRIACAO" });
+        if (normalizeStatus(cell(necessities, scopeLine.necessityRow, "Status")) === "NAO_INICIADO") {
+          appendNecessityStatusWriteV1(necessities, scopeLine, "EM_COTACAO", user, now, writes, audits, `Incluída na proposta ${id}.`);
+        }
+      }
+    });
+    if (addedScope.length) {
+      const firstRow = findFirstWritableRow(lines, "ID_Cotação", addedScope.length);
+      const range = lines.sheet.getRange(firstRow, 1, addedScope.length, lines.headers.length);
+      const addedRows = resultingLineRows.filter((row) => addedIds.indexOf(cell(lines, row, "ID_Cotação")) >= 0);
+      writes.push({ range, previous: restorableMatrixV1(range), next: addedRows });
+    }
+    currentEntries.filter((entry) => !targetNeedIds[cell(lines, entry.row, "ID_Necessidade")]).forEach((entry) => {
+      const next = entry.row.slice();
+      const lineId = cell(lines, next, "ID_Cotação");
+      const necessityId = cell(lines, next, "ID_Necessidade");
+      setCell(lines, next, "ativo", "Não");
+      setCell(lines, next, "version", Number(cell(lines, next, "version") || 1) + 1);
+      setCell(lines, next, "updated_at", now);
+      setCell(lines, next, "updated_by", user.id);
+      const range = lines.sheet.getRange(physicalRowNumber(lines, entry.rowIndex), 1, 1, lines.headers.length);
+      writes.push({ range, previous: restorableMatrixV1(range), next: [next] });
+      audits.push({ module: "COTACOES_VINCULO", recordId: lineId, changes: [{ field: "ativo", previous: cell(lines, entry.row, "ativo"), next: "Não" }], reason: "Necessidade removida do escopo da proposta.", action: "EXCLUSAO" });
+      const necessityMatch = findRowById(necessities, "ID_Necessidade", necessityId, "Necessidade");
+      if (normalizeStatus(cell(necessities, necessityMatch.row, "Status")) === "EM_COTACAO" && !hasOtherActiveGroupedLineV1(lines, necessityId, id)) {
+        appendNecessityStatusWriteV1(necessities, {
+          necessityId,
+          storeId: cell(necessities, necessityMatch.row, "ID_Loja"),
+          itemId: cell(necessities, necessityMatch.row, "ID_Item"),
+          quantity: Number(cell(necessities, necessityMatch.row, "Qtd_Planejada")),
+          necessityRow: necessityMatch.row,
+          necessityRowIndex: necessityMatch.rowIndex,
+        }, "NAO_INICIADO", user, now, writes, audits, `Removida da última proposta ativa ${id}.`);
+      }
+    });
+    if (!headerChanges.length && !writes.length) throw new ApiException("VALIDATION_ERROR", "Nenhuma alteração válida foi informada.");
+    setCell(proposals, found.current, "version", found.currentVersion + 1);
+    setCell(proposals, found.current, "updated_at", now);
+    setCell(proposals, found.current, "updated_by", user.id);
+    const proposalRange = proposals.sheet.getRange(physicalRowNumber(proposals, found.rowIndex), 1, 1, proposals.headers.length);
+    writes.unshift({ range: proposalRange, previous: restorableMatrixV1(proposalRange), next: [found.current] });
+    audits.unshift({ module: "COTACOES_PROPOSTA", recordId: id, changes: headerChanges.length ? headerChanges : [{ field: "Vínculos", previous: previousScope, next: nextScope }], reason: String(payload.reason || "Proposta agrupada atualizada."), action: "ALTERACAO" });
+    performAtomicWritesV1(spreadsheet, user, writes, audits);
+    return { quote: mapGroupedQuoteProposalV1(proposals, found.current, lines, resultingLineRows) };
+  });
+}
+
+function reopenQuoteProposal(
+  spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet,
+  user: SystemUser,
+  payload: Record<string, unknown>,
+): unknown {
+  assertModulePermission(spreadsheet, user, "Cotações", "Editar");
+  return withScriptLock(() => {
+    assertGroupedQuoteSchemaV1(spreadsheet);
+    const id = requireString(payload.id, "id");
+    const expectedVersion = requirePositiveInteger(payload.version, "version");
+    const reason = validateRequiredText(payload.reason);
+    const proposals = readTable(spreadsheet, APP_CONFIG.sheets.quoteProposals, QUOTE_PROPOSAL_HEADERS_V1);
+    const found = findVersionedRow(proposals, "ID_Proposta", id, expectedVersion, "Proposta");
+    if (!isActiveQuoteRow(proposals, found.current)) throw new ApiException("LOCKED_RECORD", "A proposta está inativa.");
+    if (normalizeQuoteStatus(cell(proposals, found.current, "Status")) !== "RECEBIDA" || isYes(cell(proposals, found.current, "Selecionada"))) {
+      throw new ApiException("INVALID_STATUS", "Somente uma proposta RECEBIDA e não selecionada pode ser reaberta.");
+    }
+    const lines = readTable(spreadsheet, APP_CONFIG.sheets.quotes, QUOTE_LINK_HEADERS_V1);
+    const linked = lines.rows.filter((row) => isActiveQuoteRow(lines, row) && cell(lines, row, "ID_Proposta") === id);
+    assertGroupedProposalScopeAllowedV1(user, lines, linked);
+    const necessities = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "Status"]);
+    const blockedNeeds = linked.map((line) => cell(lines, line, "ID_Necessidade")).filter((necessityId) => {
+      const necessity = findRowById(necessities, "ID_Necessidade", necessityId, "Necessidade").row;
+      return normalizeStatus(cell(necessities, necessity, "Status")) !== "EM_COTACAO";
+    });
+    if (blockedNeeds.length) {
+      throw new ApiException("REOPEN_SCOPE_CONFLICT", "A proposta não pode ser reaberta porque parte do escopo já avançou para outra etapa.", { necessityIds: blockedNeeds });
+    }
+    const previousStatus = cell(proposals, found.current, "Status");
+    setCell(proposals, found.current, "Status", quoteStatusToSheet("EM_ANDAMENTO"));
+    setCell(proposals, found.current, "Selecionada", "Não");
+    setCell(proposals, found.current, "version", found.currentVersion + 1);
+    setCell(proposals, found.current, "updated_at", new Date());
+    setCell(proposals, found.current, "updated_by", user.id);
+    const range = proposals.sheet.getRange(physicalRowNumber(proposals, found.rowIndex), 1, 1, proposals.headers.length);
+    performAtomicWritesV1(spreadsheet, user, [{ range, previous: restorableMatrixV1(range), next: [found.current] }], [{
+      module: "COTACOES_PROPOSTA", recordId: id, changes: [{ field: "Status", previous: previousStatus, next: "Em andamento" }], reason, action: "REABERTURA",
+    }]);
+    return { quote: mapGroupedQuoteProposalV1(proposals, found.current, lines, linked) };
+  });
+}
+
+function deleteQuoteProposal(
+  spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet,
+  user: SystemUser,
+  payload: Record<string, unknown>,
+): unknown {
+  assertModulePermission(spreadsheet, user, "Cotações", "Excluir");
+  return withScriptLock(() => {
+    assertGroupedQuoteSchemaV1(spreadsheet);
+    const id = requireString(payload.id, "id");
+    const expectedVersion = requirePositiveInteger(payload.version, "version");
+    const proposals = readTable(spreadsheet, APP_CONFIG.sheets.quoteProposals, QUOTE_PROPOSAL_HEADERS_V1);
+    const found = findVersionedRow(proposals, "ID_Proposta", id, expectedVersion, "Proposta");
+    if (!isActiveQuoteRow(proposals, found.current)) throw new ApiException("LOCKED_RECORD", "A proposta já está inativa.");
+    if (isQuoteMarkedSelected(proposals, found.current)) throw new ApiException("LOCKED_RECORD", "Uma proposta selecionada não pode ser excluída.");
+    const lines = readTable(spreadsheet, APP_CONFIG.sheets.quotes, QUOTE_LINK_HEADERS_V1);
+    const linked = lines.rows.map((row, rowIndex) => ({ row, rowIndex })).filter((entry) => isActiveQuoteRow(lines, entry.row) && cell(lines, entry.row, "ID_Proposta") === id);
+    assertGroupedProposalScopeAllowedV1(user, lines, linked.map((entry) => entry.row));
+    const necessities = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "ID_Loja", "ID_Item", "Qtd_Planejada", "Status", "version", "updated_at", "updated_by"]);
+    const now = new Date();
+    const writes: AtomicSheetWriteV1[] = [];
+    const audits: AuditEntry[] = [];
+    const proposalChanges: Array<{ field: string; previous: unknown; next: unknown }> = [];
+    applyChange(proposals, found.current, "Status", quoteStatusToSheet("DESCARTADA"), (value) => value, proposalChanges);
+    applyChange(proposals, found.current, "Selecionada", "Não", (value) => value, proposalChanges);
+    applyChange(proposals, found.current, "ativo", "Não", (value) => value, proposalChanges);
+    setCell(proposals, found.current, "version", found.currentVersion + 1);
+    setCell(proposals, found.current, "updated_at", now);
+    setCell(proposals, found.current, "updated_by", user.id);
+    const proposalRange = proposals.sheet.getRange(physicalRowNumber(proposals, found.rowIndex), 1, 1, proposals.headers.length);
+    writes.push({ range: proposalRange, previous: restorableMatrixV1(proposalRange), next: [found.current] });
+    audits.push({ module: "COTACOES_PROPOSTA", recordId: id, changes: proposalChanges, reason: String(payload.reason || "Proposta descartada."), action: "EXCLUSAO" });
+    linked.forEach((entry) => {
+      const next = entry.row.slice();
+      const lineId = cell(lines, next, "ID_Cotação");
+      const necessityId = cell(lines, next, "ID_Necessidade");
+      setCell(lines, next, "ativo", "Não");
+      setCell(lines, next, "version", Number(cell(lines, next, "version") || 1) + 1);
+      setCell(lines, next, "updated_at", now);
+      setCell(lines, next, "updated_by", user.id);
+      const range = lines.sheet.getRange(physicalRowNumber(lines, entry.rowIndex), 1, 1, lines.headers.length);
+      writes.push({ range, previous: restorableMatrixV1(range), next: [next] });
+      audits.push({ module: "COTACOES_VINCULO", recordId: lineId, changes: [{ field: "ativo", previous: cell(lines, entry.row, "ativo"), next: "Não" }], reason: `Proposta ${id} descartada.`, action: "EXCLUSAO" });
+      const necessity = findRowById(necessities, "ID_Necessidade", necessityId, "Necessidade");
+      if (normalizeStatus(cell(necessities, necessity.row, "Status")) === "EM_COTACAO" && !hasOtherActiveGroupedLineV1(lines, necessityId, id)) {
+        appendNecessityStatusWriteV1(necessities, {
+          necessityId,
+          storeId: cell(necessities, necessity.row, "ID_Loja"),
+          itemId: cell(necessities, necessity.row, "ID_Item"),
+          quantity: Number(cell(necessities, necessity.row, "Qtd_Planejada")),
+          necessityRow: necessity.row,
+          necessityRowIndex: necessity.rowIndex,
+        }, "NAO_INICIADO", user, now, writes, audits, `Última proposta ativa removida: ${id}.`);
+      }
+    });
+    performAtomicWritesV1(spreadsheet, user, writes, audits);
+    return { id };
+  });
+}
+
+function selectQuoteProposal(
+  spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet,
+  user: SystemUser,
+  payload: Record<string, unknown>,
+): unknown {
+  assertModulePermission(spreadsheet, user, "Cotações", "Editar");
+  return withScriptLock(() => {
+    assertGroupedQuoteSchemaV1(spreadsheet);
+    const id = requireString(payload.id, "id");
+    const expectedVersion = requirePositiveInteger(payload.version, "version");
+    const proposals = readTable(spreadsheet, APP_CONFIG.sheets.quoteProposals, QUOTE_PROPOSAL_HEADERS_V1);
+    const found = findVersionedRow(proposals, "ID_Proposta", id, expectedVersion, "Proposta");
+    if (!isActiveQuoteRow(proposals, found.current)) throw new ApiException("LOCKED_RECORD", "A proposta está inativa.");
+    if (normalizeQuoteStatus(cell(proposals, found.current, "Status")) !== "RECEBIDA" || isYes(cell(proposals, found.current, "Selecionada"))) {
+      throw new ApiException("INVALID_STATUS", "Somente propostas RECEBIDAS e ainda não selecionadas podem ser escolhidas.");
+    }
+    const validUntil = dateCell(proposals, found.current, "Validade_Proposta");
+    if (validUntil && validUntil < formatDateOnly(new Date())) throw new ApiException("EXPIRED_QUOTE", "A validade desta proposta expirou.");
+    const lines = readTable(spreadsheet, APP_CONFIG.sheets.quotes, QUOTE_LINK_HEADERS_V1);
+    const linked = lines.rows.filter((row) => isActiveQuoteRow(lines, row) && cell(lines, row, "ID_Proposta") === id);
+    assertGroupedProposalScopeAllowedV1(user, lines, linked);
+    const targetNeedIds = Object.fromEntries(linked.map((row) => [cell(lines, row, "ID_Necessidade"), true]));
+    const conflicts = findSelectedScopeConflictsV1(proposals, lines, targetNeedIds, id);
+    if (conflicts.length) {
+      throw new ApiException("SELECTED_SCOPE_CONFLICT", "Uma ou mais necessidades já pertencem a outra proposta selecionada. A seleção anterior não foi alterada.", { conflicts });
+    }
+    const necessities = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "ID_Loja", "ID_Item", "Qtd_Planejada", "Status", "version", "updated_at", "updated_by"]);
+    const now = new Date();
+    const writes: AtomicSheetWriteV1[] = [];
+    const audits: AuditEntry[] = [];
+    linked.forEach((line) => {
+      const necessityId = cell(lines, line, "ID_Necessidade");
+      const necessity = findRowById(necessities, "ID_Necessidade", necessityId, "Necessidade");
+      if (normalizeStatus(cell(necessities, necessity.row, "Status")) !== "EM_COTACAO") {
+        throw new ApiException("INVALID_NECESSITY_STATUS", `A necessidade ${necessityId} não está em EM_COTACAO e impede a seleção integral.`);
+      }
+      appendNecessityStatusWriteV1(necessities, {
+        necessityId,
+        storeId: cell(necessities, necessity.row, "ID_Loja"),
+        itemId: cell(necessities, necessity.row, "ID_Item"),
+        quantity: Number(cell(necessities, necessity.row, "Qtd_Planejada")),
+        necessityRow: necessity.row,
+        necessityRowIndex: necessity.rowIndex,
+      }, "AGUARDANDO_APROVACAO", user, now, writes, audits, `Proposta ${id} selecionada integralmente.`);
+    });
+    const previousStatus = cell(proposals, found.current, "Status");
+    setCell(proposals, found.current, "Status", quoteStatusToSheet("SELECIONADA"));
+    setCell(proposals, found.current, "Selecionada", "Sim");
+    setCell(proposals, found.current, "version", found.currentVersion + 1);
+    setCell(proposals, found.current, "updated_at", now);
+    setCell(proposals, found.current, "updated_by", user.id);
+    const range = proposals.sheet.getRange(physicalRowNumber(proposals, found.rowIndex), 1, 1, proposals.headers.length);
+    writes.unshift({ range, previous: restorableMatrixV1(range), next: [found.current] });
+    audits.unshift({ module: "COTACOES_PROPOSTA", recordId: id, changes: [{ field: "Status", previous: previousStatus, next: "Selecionada" }, { field: "Selecionada", previous: "Não", next: "Sim" }], reason: String(payload.reason || "Proposta selecionada integralmente."), action: "SELECAO" });
+    performAtomicWritesV1(spreadsheet, user, writes, audits);
+    return { quote: mapGroupedQuoteProposalV1(proposals, found.current, lines, linked) };
+  });
+}
+
+function resolveGroupedQuoteScopeV1(user: SystemUser, value: unknown, necessities: SheetTable): GroupedQuoteScopeLineV1[] {
+  if (!Array.isArray(value) || !value.length || value.length > 100) throw new ApiException("VALIDATION_ERROR", "Selecione de uma a 100 necessidades.");
+  const ids = value.map((entry) => requireString(entry, "necessityIds"));
+  if (new Set(ids).size !== ids.length) throw new ApiException("VALIDATION_ERROR", "A mesma necessidade não pode aparecer duas vezes na proposta.");
+  const scope = ids.map((necessityId) => {
+    const match = findRowById(necessities, "ID_Necessidade", necessityId, "Necessidade");
+    const storeId = cell(necessities, match.row, "ID_Loja");
+    const itemId = cell(necessities, match.row, "ID_Item");
+    if (!storeId || !itemId) throw new ApiException("INVALID_SCOPE", `A necessidade ${necessityId} não possui loja e item válidos.`);
+    assertStoreScope(user, storeId);
+    assertNecessityCanBeQuoted(cell(necessities, match.row, "Status"));
+    return {
+      necessityId,
+      storeId,
+      itemId,
+      quantity: validatePositiveNumber(cell(necessities, match.row, "Qtd_Planejada")),
+      necessityRow: match.row,
+      necessityRowIndex: match.rowIndex,
+    };
+  });
+  const itemIds = Array.from(new Set(scope.map((line) => line.itemId)));
+  if (itemIds.length !== 1) throw new ApiException("MIXED_ITEMS_NOT_SUPPORTED", "Nesta fase, uma proposta deve conter exatamente um item em uma ou mais lojas.");
+  return scope.sort((left, right) => left.necessityId.localeCompare(right.necessityId));
+}
+
+function requireActiveSupplierV1(table: SheetTable, value: unknown): unknown[] {
+  const supplierId = requireString(value, "supplierId");
+  const supplier = findRowById(table, "ID_Fornecedor", supplierId, "Fornecedor").row;
+  if (!isYes(cell(table, supplier, "Ativo"))) throw new ApiException("VALIDATION_ERROR", "O fornecedor selecionado está inativo.");
+  return supplier;
+}
+
+function validateGroupedQuoteValuesV1(payload: Record<string, unknown>, options: QuoteOptionValues, quantityTotal: number): QuoteValidatedValues {
+  return validateQuoteValues({ ...payload, quantity: quantityTotal }, options, quantityTotal);
+}
+
+function writeGroupedProposalRowV1(
+  table: SheetTable,
+  row: unknown[],
+  proposalId: string,
+  supplier: unknown[],
+  supplierTable: SheetTable,
+  values: QuoteValidatedValues,
+  scope: GroupedQuoteScopeLineV1[],
+  user: SystemUser,
+  now: Date,
+): void {
+  const quantityTotal = scope.reduce((sum, line) => sum + line.quantity, 0);
+  setCell(table, row, "ID_Proposta", proposalId);
+  setCell(table, row, "ID_Fornecedor", values.supplierId);
+  setCell(table, row, "Origem_Cotação", values.origin);
+  setCell(table, row, "Quantidade_Total", quantityTotal);
+  setCell(table, row, "Subtotal_Itens", roundMoneyV1(quantityTotal * values.unitPrice));
+  setCell(table, row, "Frete_Total", values.freight);
+  setCell(table, row, "Outros_Custos_Total", values.otherCosts);
+  setCell(table, row, "Valor_Total_Proposta", values.total);
+  setCell(table, row, "Forma_Pagamento", values.paymentMethod);
+  setCell(table, row, "Prazo_Dias", values.leadTimeDays);
+  setCell(table, row, "Validade_Proposta", values.proposalValidUntil);
+  setCell(table, row, "Link", values.link);
+  setCell(table, row, "Nota_Fornecedor", cell(supplierTable, supplier, "Nota_Fornecedor"));
+  setCell(table, row, "Status", quoteStatusToSheet(values.status));
+  setCell(table, row, "Selecionada", "Não");
+  setCell(table, row, "Data_Cotação", values.quoteDate);
+  setCell(table, row, "Responsável", user.name);
+  setCell(table, row, "Observações", values.notes);
+  setCell(table, row, "ativo", "Sim");
+  setTechnicalCreationFields(table, row, user, now);
+}
+
+function buildGroupedLineRowV1(
+  table: SheetTable,
+  lineId: string,
+  proposalId: string,
+  scope: GroupedQuoteScopeLineV1,
+  unitPrice: number,
+  user: SystemUser,
+  now: Date,
+): unknown[] {
+  const row = Array(table.headers.length).fill("");
+  setCell(table, row, "ID_Cotação", lineId);
+  setCell(table, row, "ID_Proposta", proposalId);
+  setCell(table, row, "ID_Necessidade", scope.necessityId);
+  setCell(table, row, "ID_Loja", scope.storeId);
+  setCell(table, row, "ID_Item", scope.itemId);
+  setCell(table, row, "Preço_Unitário", unitPrice);
+  setCell(table, row, "Quantidade", scope.quantity);
+  setCell(table, row, "Subtotal_Linha", roundMoneyV1(scope.quantity * unitPrice));
+  setCell(table, row, "ativo", "Sim");
+  setTechnicalCreationFields(table, row, user, now);
+  return row;
+}
+
+function nextInternalIdsV1(table: SheetTable, idHeader: string, prefix: string, width: number, count: number): string[] {
+  if (!count) return [];
+  const first = nextInternalId(table, idHeader, prefix, width);
+  const firstNumber = Number(first.slice(prefix.length + 1));
+  return Array.from({ length: count }, (_, index) => `${prefix}-${String(firstNumber + index).padStart(width, "0")}`);
+}
+
+function appendNecessityStatusWriteV1(
+  table: SheetTable,
+  scope: GroupedQuoteScopeLineV1,
+  nextStatus: string,
+  user: SystemUser,
+  now: Date,
+  writes: AtomicSheetWriteV1[],
+  audits: AuditEntry[],
+  reason: string,
+): void {
+  const next = scope.necessityRow.slice();
+  const previousStatus = cell(table, next, "Status");
+  if (normalizeStatus(previousStatus) === nextStatus) return;
+  setCell(table, next, "Status", nextStatus);
+  setCell(table, next, "version", Number(cell(table, next, "version") || 1) + 1);
+  setCell(table, next, "updated_at", now);
+  setCell(table, next, "updated_by", user.id);
+  const range = table.sheet.getRange(physicalRowNumber(table, scope.necessityRowIndex), 1, 1, table.headers.length);
+  writes.push({ range, previous: restorableMatrixV1(range), next: [next] });
+  audits.push({ module: "NECESSIDADES", recordId: scope.necessityId, changes: [{ field: "Status", previous: previousStatus, next: nextStatus }], reason, action: "ALTERACAO" });
+}
+
+function assertGroupedProposalScopeAllowedV1(user: SystemUser, lines: SheetTable, rows: unknown[][]): void {
+  if (!rows.length) throw new ApiException("ORPHAN_PROPOSAL", "A proposta não possui vínculos ativos.");
+  rows.forEach((row) => assertStoreScope(user, cell(lines, row, "ID_Loja")));
+}
+
+function hasOtherActiveGroupedLineV1(lines: SheetTable, necessityId: string, excludedProposalId: string): boolean {
+  return lines.rows.some((row) => isActiveQuoteRow(lines, row)
+    && cell(lines, row, "ID_Necessidade") === necessityId
+    && cell(lines, row, "ID_Proposta") !== excludedProposalId);
+}
+
+function findSelectedScopeConflictsV1(
+  proposals: SheetTable,
+  lines: SheetTable,
+  targetNeedIds: Record<string, boolean>,
+  targetProposalId: string,
+): Array<{ proposalId: string; necessityId: string }> {
+  const selectedProposalIds = Object.fromEntries(proposals.rows
+    .filter((row) => isActiveQuoteRow(proposals, row) && cell(proposals, row, "ID_Proposta") !== targetProposalId && isQuoteMarkedSelected(proposals, row))
+    .map((row) => [cell(proposals, row, "ID_Proposta"), true]));
+  return lines.rows.filter((row) => isActiveQuoteRow(lines, row)
+    && Boolean(selectedProposalIds[cell(lines, row, "ID_Proposta")])
+    && Boolean(targetNeedIds[cell(lines, row, "ID_Necessidade")]))
+    .map((row) => ({ proposalId: cell(lines, row, "ID_Proposta"), necessityId: cell(lines, row, "ID_Necessidade") }));
+}
+
+function quoteScopeSignatureV1(lines: Array<{ necessityId: string; itemId: string; quantity: number }>): string {
+  return lines.map((line) => {
+    if (!line.necessityId || !line.itemId || !Number.isFinite(line.quantity) || line.quantity <= 0) {
+      throw new ApiException("INVALID_SCOPE", "A assinatura de escopo contém necessidade, item ou quantidade inválida.");
+    }
+    return `${line.necessityId}:${line.itemId}:${Number(line.quantity.toFixed(6))}`;
+  }).sort().join("|");
+}
+
+function restorableMatrixV1(range: GoogleAppsScript.Spreadsheet.Range): unknown[][] {
+  const values = range.getValues();
+  const formulas = range.getFormulas();
+  return values.map((row, rowIndex) => row.map((value, columnIndex) => formulas[rowIndex][columnIndex] || value));
+}
+
+function performAtomicWritesV1(
+  spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet,
+  user: SystemUser,
+  writes: AtomicSheetWriteV1[],
+  audits: AuditEntry[],
+): void {
+  try {
+    writes.forEach((write) => write.range.setValues(write.next));
+    appendAuditBatch(spreadsheet, user, audits);
+    SpreadsheetApp.flush();
+  } catch (error) {
+    writes.slice().reverse().forEach((write) => write.range.setValues(write.previous));
+    SpreadsheetApp.flush();
+    throw error;
+  }
+}
+
 function createQuote(
   spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet,
   user: SystemUser,
   payload: Record<string, unknown>,
 ): unknown {
+  rejectLegacyQuoteMutationV1();
   assertModulePermission(spreadsheet, user, "Cotações", "Criar");
   return withScriptLock(() => {
     const necessityId = requireString(payload.necessityId, "necessityId");
@@ -520,6 +1302,7 @@ function updateQuote(
   user: SystemUser,
   payload: Record<string, unknown>,
 ): unknown {
+  rejectLegacyQuoteMutationV1();
   assertModulePermission(spreadsheet, user, "Cotações", "Editar");
   return withScriptLock(() => {
     const id = requireString(payload.id, "id");
@@ -607,6 +1390,7 @@ function deleteQuote(
   user: SystemUser,
   payload: Record<string, unknown>,
 ): unknown {
+  rejectLegacyQuoteMutationV1();
   assertModulePermission(spreadsheet, user, "Cotações", "Excluir");
   return withScriptLock(() => {
     const id = requireString(payload.id, "id");
@@ -661,6 +1445,7 @@ function selectQuote(
   user: SystemUser,
   payload: Record<string, unknown>,
 ): unknown {
+  rejectLegacyQuoteMutationV1();
   assertModulePermission(spreadsheet, user, "Cotações", "Editar");
   return withScriptLock(() => {
     const id = requireString(payload.id, "id");
@@ -1421,6 +2206,9 @@ function buildTechnicalStatus(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsh
   tables: TechnicalTableStatus[];
 } {
   const tables = APP_CONFIG.setupTables.map(({ sheet, keyHeader }) => inspectTechnicalTable(spreadsheet, sheet, keyHeader));
+  if (spreadsheet.getSheetByName(APP_CONFIG.sheets.quoteProposals)) {
+    tables.push(inspectTechnicalTable(spreadsheet, APP_CONFIG.sheets.quoteProposals, "ID_Proposta"));
+  }
   return {
     ready: tables.every((table) => table.ok && table.missing.length === 0),
     checkedAt: new Date().toISOString(),

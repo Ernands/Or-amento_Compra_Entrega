@@ -166,13 +166,16 @@ export interface Supplier {
 
 export interface Quote {
   id: string;
-  necessityId: string;
-  storeId: string;
   itemId: string;
   supplierId: string;
+  lines: QuoteLine[];
+  necessityIds: string[];
+  storeIds: string[];
+  scopeSignature: string;
   origin: string;
   unitPrice: number;
-  quantity: number;
+  quantityTotal: number;
+  subtotalItems: number;
   freight: number;
   otherCosts: number;
   total: number;
@@ -186,6 +189,19 @@ export interface Quote {
   quoteDate: string;
   responsible: string;
   notes: string;
+  version: number;
+  active: boolean;
+}
+
+export interface QuoteLine {
+  id: string;
+  proposalId: string;
+  necessityId: string;
+  storeId: string;
+  itemId: string;
+  unitPrice: number;
+  quantity: number;
+  subtotal: number;
   version: number;
   active: boolean;
 }
@@ -220,6 +236,7 @@ export interface QuotesWorkspace {
   routes: PurchaseRoute[];
   options: QuoteOptions;
   permissions: QuotePermissions;
+  schemaMode: "LEGACY" | "GROUPED";
   checkedAt: string;
 }
 
@@ -241,7 +258,6 @@ export interface QuoteValuesInput {
   supplierId: string;
   origin: string;
   unitPrice: number;
-  quantity: number;
   freight: number;
   otherCosts: number;
   paymentMethod: string;
@@ -254,13 +270,13 @@ export interface QuoteValuesInput {
 }
 
 export interface CreateQuoteInput extends QuoteValuesInput {
-  necessityId: string;
+  necessityIds: string[];
 }
 
 export interface UpdateQuoteInput {
   id: string;
   version: number;
-  changes: QuoteValuesInput & { necessityId?: string };
+  changes: QuoteValuesInput & { necessityIds: string[] };
   reason?: string;
 }
 
@@ -274,6 +290,12 @@ export interface DeleteQuoteInput {
   id: string;
   version: number;
   reason?: string;
+}
+
+export interface ReopenQuoteInput {
+  id: string;
+  version: number;
+  reason: string;
 }
 
 export interface SessionUser {

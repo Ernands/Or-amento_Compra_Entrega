@@ -97,12 +97,17 @@ O teste autenticado de `bootstrap` também aceita `GOOGLE_ID_TOKEN` temporário.
 - `POST {"action":"updateNecessity","credential":"<Google ID token>","payload":{...}}`: escrita versionada com permissão, validação de status, `LockService` e auditoria em `12_HISTORICO`.
 - `POST {"action":"updateStore","credential":"<Google ID token>","payload":{...}}`: edição versionada de lojas com escopo, permissão do módulo e auditoria.
 - `POST {"action":"updateItem","credential":"<Google ID token>","payload":{...}}`: edição versionada do catálogo com permissão do módulo e auditoria.
-- `POST {"action":"quotesWorkspace","credential":"<Google ID token>","payload":{}}`: fornecedores, cotações e rotas filtrados pelo escopo, opções reais de `14_LISTAS` e permissões do usuário.
+- `POST {"action":"quotesWorkspace","credential":"<Google ID token>","payload":{}}`: leitura dual. Retorna `schemaMode=LEGACY` antes da migração e propostas agrupadas depois dela, sempre filtradas por `Lojas_Permitidas`.
 - `POST {"action":"createSupplier","credential":"<Google ID token>","payload":{...}}`: cadastro de fornecedor nos campos existentes de `04_FORNECEDORES`.
-- `POST {"action":"createQuote","credential":"<Google ID token>","payload":{...}}`: cria uma proposta em `05_COTACOES`, deriva loja/item da necessidade e calcula o total no backend.
-- `POST {"action":"updateQuote","credential":"<Google ID token>","payload":{"id":"COT-000001","version":1,"changes":{"necessityId":"NEC-000001",...},"reason":"..."}}`: edição versionada; preserva o ID da cotação e deriva loja, item e quantidade da necessidade escolhida.
-- `POST {"action":"deleteQuote","credential":"<Google ID token>","payload":{"id":"COT-000001","version":2,"reason":"..."}}`: exclusão lógica versionada, auditada e protegida por `LockService`.
-- `POST {"action":"selectQuote","credential":"<Google ID token>","payload":{"id":"COT-000001","version":2,"reason":"..."}}`: seleciona manualmente uma proposta recebida e desmarca a anterior da mesma necessidade.
+- `POST {"action":"createQuoteProposal","credential":"<Google ID token>","payload":{...}}`: cria cabeçalho em `16`, um ou mais vínculos em `05` e deriva quantidades de `03_NECESSIDADES`.
+- `POST {"action":"updateQuoteProposal","credential":"<Google ID token>","payload":{"id":"PRP-000001","version":1,"changes":{"necessityIds":[...],...},"reason":"..."}}`: altera proposta editável e sincroniza vínculos, totais e necessidades.
+- `POST {"action":"reopenQuoteProposal","credential":"<Google ID token>","payload":{"id":"PRP-000001","version":2,"reason":"..."}}`: reabre explicitamente uma proposta `RECEBIDA` para `EM_ANDAMENTO`.
+- `POST {"action":"deleteQuoteProposal","credential":"<Google ID token>","payload":{"id":"PRP-000001","version":2,"reason":"..."}}`: exclusão lógica integral e auditada.
+- `POST {"action":"selectQuoteProposal","credential":"<Google ID token>","payload":{"id":"PRP-000001","version":2,"reason":"..."}}`: seleção integral com bloqueio de necessidades sobrepostas e atualização para `AGUARDANDO_APROVACAO`.
+
+As ações legadas `createQuote`, `updateQuote`, `deleteQuote` e `selectQuote` não gravam mais e retornam `CLIENT_UPDATE_REQUIRED`. Antes da migração, as ações agrupadas retornam `QUOTE_MIGRATION_REQUIRED`.
+
+O contrato completo e a ordem exata de implantação/migração estão em `docs/PROPOSTAS_COTACAO_OPERACIONAL.md`.
 
 Todo acesso à planilha usa `SPREADSHEET_ID` via `PropertiesService`. O ID não é hardcoded em `Code.gs`.
 

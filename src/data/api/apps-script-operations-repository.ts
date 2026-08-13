@@ -1,6 +1,6 @@
 import { AppsScriptClient } from "@/data/api/apps-script-client";
 import type { OperationsRepository } from "@/data/repositories/operations-repository";
-import type { CreateQuoteInput, CreateSupplierInput, DataSourceInfo, DeleteQuoteInput, Item, Necessity, Quote, QuotesWorkspace, SelectQuoteInput, SessionUser, Store, Supplier, TechnicalStatus, UpdateItemInput, UpdateQuoteInput, UpdateStoreInput } from "@/domain/entities";
+import type { CreateQuoteInput, CreateSupplierInput, DataSourceInfo, DeleteQuoteInput, Item, Necessity, Quote, QuotesWorkspace, ReopenQuoteInput, SelectQuoteInput, SessionUser, Store, Supplier, TechnicalStatus, UpdateItemInput, UpdateQuoteInput, UpdateStoreInput } from "@/domain/entities";
 
 export interface ViewBootstrapPayload {
   source: DataSourceInfo;
@@ -44,8 +44,9 @@ export class AppsScriptOperationsRepository implements OperationsRepository {
     return this.client.call<TechnicalStatus>("technicalStatus");
   }
 
-  getQuotesWorkspace() {
-    return this.client.call<QuotesWorkspace>("quotesWorkspace");
+  async getQuotesWorkspace() {
+    const workspace = await this.client.call<QuotesWorkspace>("quotesWorkspace");
+    return { ...workspace, schemaMode: workspace.schemaMode || "LEGACY" as const };
   }
 
   createSupplier(input: CreateSupplierInput) {
@@ -53,19 +54,23 @@ export class AppsScriptOperationsRepository implements OperationsRepository {
   }
 
   createQuote(input: CreateQuoteInput) {
-    return this.client.call<{ quote: Quote }>("createQuote", input);
+    return this.client.call<{ quote: Quote }>("createQuoteProposal", input);
   }
 
   updateQuote(input: UpdateQuoteInput) {
-    return this.client.call<{ quote: Quote }>("updateQuote", input);
+    return this.client.call<{ quote: Quote }>("updateQuoteProposal", input);
+  }
+
+  reopenQuote(input: ReopenQuoteInput) {
+    return this.client.call<{ quote: Quote }>("reopenQuoteProposal", input);
   }
 
   deleteQuote(input: DeleteQuoteInput) {
-    return this.client.call<{ id: string }>("deleteQuote", input);
+    return this.client.call<{ id: string }>("deleteQuoteProposal", input);
   }
 
   selectQuote(input: SelectQuoteInput) {
-    return this.client.call<{ quote: Quote }>("selectQuote", input);
+    return this.client.call<{ quote: Quote }>("selectQuoteProposal", input);
   }
 
   updateStore(input: UpdateStoreInput) {

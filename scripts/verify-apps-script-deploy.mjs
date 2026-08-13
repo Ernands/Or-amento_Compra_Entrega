@@ -25,7 +25,7 @@ assert.match(deployCode, /function dispatchAuthenticatedAction\(/, "Dispatch aut
 assert.match(deployCode, /getProperty\("PUBLIC_READ_ACCESS"\)/, "PUBLIC_READ_ACCESS não usa PropertiesService.");
 assert.match(deployCode, /verifyGoogleCredential\(requireGoogleCredential\(request\.credential\)\)[\s\S]*?const spreadsheet = openConfiguredSpreadsheet\(\)/, "Ações autenticadas devem exigir credencial antes de abrir a planilha.");
 const publicDispatchCode = deployCode.slice(deployCode.indexOf("function dispatchPublicReadAction"), deployCode.indexOf("function dispatchAuthenticatedAction"));
-for (const action of ["createSupplier", "createQuote", "updateQuote", "deleteQuote", "selectQuote", "updateNecessity", "updateStore", "updateItem", "technicalStatus"]) {
+for (const action of ["createSupplier", "createQuote", "updateQuote", "deleteQuote", "selectQuote", "createQuoteProposal", "updateQuoteProposal", "reopenQuoteProposal", "deleteQuoteProposal", "selectQuoteProposal", "updateNecessity", "updateStore", "updateItem", "technicalStatus"]) {
   assert.doesNotMatch(publicDispatchCode, new RegExp(action), `${action} não pode pertencer ao dispatch público.`);
 }
 for (const action of ["publicBootstrap", "publicQuotesWorkspace"]) {
@@ -39,6 +39,20 @@ for (const action of ["quotesWorkspace", "createSupplier", "createQuote", "updat
 for (const operation of ["createSupplier", "createQuote", "updateQuote", "deleteQuote", "selectQuote"]) {
   assert.match(deployCode, new RegExp(`function ${operation}\\(`), `${operation} ausente.`);
 }
+for (const action of ["createQuoteProposal", "updateQuoteProposal", "reopenQuoteProposal", "deleteQuoteProposal", "selectQuoteProposal"]) {
+  assert.match(deployCode, new RegExp(`case "${action}":`), `A acao agrupada ${action} nao esta no dispatch autenticado.`);
+  assert.match(deployCode, new RegExp(`function ${action}\\(`), `A operacao agrupada ${action} esta ausente.`);
+}
+for (const operation of ["createQuoteProposal", "updateQuoteProposal", "reopenQuoteProposal", "deleteQuoteProposal", "selectQuoteProposal"]) {
+  assert.match(deployCode, new RegExp(`function ${operation}[\\s\\S]*?return withScriptLock\\(`), `${operation} deve usar LockService.`);
+  assert.match(deployCode, new RegExp(`function ${operation}[\\s\\S]*?assertGroupedQuoteSchemaV1`), `${operation} deve bloquear gravacao antes da migracao.`);
+}
+assert.match(deployCode, /function updateQuoteProposal[\s\S]*?findVersionedRow/, "updateQuoteProposal deve validar version.");
+assert.match(deployCode, /function reopenQuoteProposal[\s\S]*?RECEBIDA/, "reopenQuoteProposal deve exigir estado RECEBIDA.");
+assert.match(deployCode, /function selectQuoteProposal[\s\S]*?SELECTED_SCOPE_CONFLICT/, "selectQuoteProposal deve bloquear sobreposicao selecionada.");
+assert.match(deployCode, /function resolveGroupedQuoteScopeV1[\s\S]*?MIXED_ITEMS_NOT_SUPPORTED/, "O escopo V1 deve aceitar um item em varias lojas.");
+assert.match(deployCode, /function quoteScopeSignatureV1/, "Assinatura canonica de escopo ausente.");
+assert.match(deployCode, /function dispatchAuthenticatedAction[\s\S]*?CLIENT_UPDATE_REQUIRED/, "As acoes legadas devem exigir atualizacao do frontend.");
 assert.match(deployCode, /function createQuote[\s\S]*?return withScriptLock\(/, "createQuote deve usar LockService.");
 assert.match(deployCode, /function updateQuote[\s\S]*?findVersionedRow\(/, "updateQuote deve validar version.");
 assert.match(deployCode, /function deleteQuote[\s\S]*?return withScriptLock\(/, "deleteQuote deve usar LockService.");
@@ -161,6 +175,16 @@ const legacyQuoteHeaders = [
   "Data_Cotacao", "Responsavel", "Observacoes", "created_at", "created_by", "updated_at",
   "updated_by", "version", "ativo",
 ];
+const groupedProposalHeaders = [
+  "ID_Proposta", "ID_Fornecedor", "Origem_Cotacao", "Quantidade_Total", "Subtotal_Itens", "Frete_Total",
+  "Outros_Custos_Total", "Valor_Total_Proposta", "Forma_Pagamento", "Prazo_Dias", "Validade_Proposta", "Link",
+  "Nota_Fornecedor", "Status", "Selecionada", "Data_Cotacao", "Responsavel", "Observacoes", "created_at",
+  "created_by", "updated_at", "updated_by", "version", "ativo",
+];
+const groupedLineHeaders = [
+  "ID_Cotacao", "ID_Proposta", "ID_Necessidade", "ID_Loja", "ID_Item", "Preco_Unitario", "Quantidade",
+  "Subtotal_Linha", "created_at", "created_by", "updated_at", "updated_by", "version", "ativo",
+];
 const legacyQuoteRow = [
   "COT-000001", "NEC-000001", "LOJ-001", "ITM-00001", "FOR-000001", "Matriz",
   575, 1, 2, 2, 579, "PIX", 10, "2026-08-31", "https://example.com/proposta", 5,
@@ -212,6 +236,68 @@ const duplicateQuotePlan = sandbox.buildQuoteProposalMigrationPlanV1(legacyMigra
 assert.equal(duplicateQuotePlan.report.ready_to_migrate, false);
 assert.equal(duplicateQuotePlan.report.duplicate_ids.length, 1);
 
+assert.equal(sandbox.quoteSchemaMode(legacyMigrationSpreadsheet()), "LEGACY");
+assert.throws(
+  () => sandbox.assertGroupedQuoteSchemaV1(legacyMigrationSpreadsheet()),
+  /pré-migração|pre-migração/i,
+  "O backend nao pode gravar no formato agrupado antes da migracao.",
+);
+const groupedSchemaSpreadsheet = {
+  getSheetByName: (name) => ({
+    "05_COTACOES": fakeDataSheet(["ID_Cotacao", "ID_Proposta"], []),
+    "16_PROPOSTAS_COTACAO": fakeDataSheet(["ID_Proposta"], []),
+  })[name] || null,
+};
+assert.equal(sandbox.quoteSchemaMode(groupedSchemaSpreadsheet), "GROUPED");
+assert.throws(
+  () => sandbox.quoteSchemaMode({ getSheetByName: (name) => name === "05_COTACOES" ? fakeDataSheet(["ID_Cotacao", "ID_Proposta"], []) : null }),
+  /parcial/i,
+  "Uma migracao parcial deve bloquear o runtime.",
+);
+
+const scopeSpreadsheet = {
+  getSheetByName: () => fakeDataSheet(
+    ["ID_Necessidade", "ID_Loja", "ID_Item", "Qtd_Planejada", "Status", "version", "updated_at", "updated_by"],
+    [
+      ["NEC-000002", "LOJ-002", "ITM-00001", 2, "Em cotacao", 1, "", ""],
+      ["NEC-000001", "LOJ-001", "ITM-00001", 1, "Nao iniciado", 1, "", ""],
+    ],
+  ),
+};
+const scopeTable = sandbox.readTable(scopeSpreadsheet, "03_NECESSIDADES", ["ID_Necessidade", "ID_Loja", "ID_Item", "Qtd_Planejada", "Status", "version", "updated_at", "updated_by"]);
+const groupedScope = sandbox.resolveGroupedQuoteScopeV1({ allowedStoreIds: "TODAS" }, ["NEC-000002", "NEC-000001"], scopeTable);
+assert.deepEqual(Array.from(groupedScope, (line) => line.necessityId), ["NEC-000001", "NEC-000002"]);
+assert.equal(groupedScope.reduce((sum, line) => sum + line.quantity, 0), 3);
+assert.equal(sandbox.quoteScopeSignatureV1(groupedScope), "NEC-000001:ITM-00001:1|NEC-000002:ITM-00001:2");
+assert.throws(
+  () => sandbox.resolveGroupedQuoteScopeV1({ allowedStoreIds: ["LOJ-001"] }, ["NEC-000001", "NEC-000002"], scopeTable),
+  /escopo de acesso/i,
+  "Todas as lojas da proposta devem pertencer a Lojas_Permitidas.",
+);
+const mixedScopeTable = sandbox.readTable({ getSheetByName: () => fakeDataSheet(
+  ["ID_Necessidade", "ID_Loja", "ID_Item", "Qtd_Planejada", "Status", "version", "updated_at", "updated_by"],
+  [["NEC-000001", "LOJ-001", "ITM-00001", 1, "Nao iniciado", 1, "", ""], ["NEC-000002", "LOJ-002", "ITM-00002", 1, "Nao iniciado", 1, "", ""]],
+) }, "03_NECESSIDADES", ["ID_Necessidade", "ID_Loja", "ID_Item", "Qtd_Planejada", "Status", "version", "updated_at", "updated_by"]);
+assert.throws(
+  () => sandbox.resolveGroupedQuoteScopeV1({ allowedStoreIds: "TODAS" }, ["NEC-000001", "NEC-000002"], mixedScopeTable),
+  /exatamente um item/i,
+  "A fase V1 nao pode misturar itens na mesma proposta.",
+);
+
+const proposalConflictTable = sandbox.readTable({ getSheetByName: () => fakeDataSheet(
+  ["ID_Proposta", "Status", "Selecionada", "ativo"],
+  [["PRP-000001", "Selecionada", "Sim", "Sim"], ["PRP-000002", "Recebida", "Nao", "Sim"]],
+) }, "16_PROPOSTAS_COTACAO", ["ID_Proposta", "Status", "Selecionada", "ativo"]);
+const lineConflictTable = sandbox.readTable({ getSheetByName: () => fakeDataSheet(
+  ["ID_Cotacao", "ID_Proposta", "ID_Necessidade", "ativo"],
+  [["COT-000001", "PRP-000001", "NEC-000001", "Sim"], ["COT-000002", "PRP-000002", "NEC-000001", "Sim"]],
+) }, "05_COTACOES", ["ID_Cotacao", "ID_Proposta", "ID_Necessidade", "ativo"]);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(sandbox.findSelectedScopeConflictsV1(proposalConflictTable, lineConflictTable, { "NEC-000001": true }, "PRP-000002"))),
+  [{ proposalId: "PRP-000001", necessityId: "NEC-000001" }],
+  "Uma proposta selecionada sobreposta deve bloquear a nova selecao sem ser desmontada.",
+);
+
 const publicSheets = {
   "01_LOJAS": fakeDataSheet(
     ["ID_Loja", "Loja", "Cidade", "UF", "Status", "Responsável", "E-mail", "Telefone"],
@@ -237,10 +323,29 @@ assert.deepEqual(Object.keys(publicBootstrap.necessities[0]), ["id", "storeId", 
 assert.doesNotMatch(JSON.stringify(publicBootstrap), /Pessoa privada|privado@example\.com|Nota privada/);
 const publicQuotes = sandbox.buildPublicQuotesWorkspace(publicSpreadsheet);
 assert.deepEqual(Object.keys(publicQuotes.suppliers[0]), ["id", "name"]);
-assert.deepEqual(Object.keys(publicQuotes.quotes[0]), ["id", "necessityId", "storeId", "itemId", "supplierId", "quantity", "total", "leadTimeDays", "status", "selected"]);
+assert.deepEqual(Object.keys(publicQuotes.quotes[0]), ["id", "itemId", "supplierId", "lines", "necessityIds", "storeIds", "scopeSignature", "quantityTotal", "total", "leadTimeDays", "status", "selected"]);
 assert.equal(publicQuotes.suppliers[0].name, "Fornecedor 01");
 assert.equal(publicQuotes.quotes[0].id, "PUB-COT-000001");
+assert.equal(publicQuotes.schemaMode, "LEGACY");
 assert.doesNotMatch(JSON.stringify(publicQuotes), /FOR-999999|COT-999999|privado|proposta|Nota privada/i);
+
+const groupedPublicSheets = {
+  "16_PROPOSTAS_COTACAO": fakeDataSheet(groupedProposalHeaders, [[
+    "PRP-000001", "FOR-000001", "Matriz", 3, 300, 20, 5, 325, "PIX", 10, "2026-08-31", "https://privado.example/proposta",
+    5, "Recebida", "Nao", "2026-08-13", "Pessoa privada", "Nota privada", "", "privado@example.com", "", "privado@example.com", 2, "Sim",
+  ]]),
+  "05_COTACOES": fakeDataSheet(groupedLineHeaders, [
+    ["COT-000001", "PRP-000001", "NEC-000001", "LOJ-001", "ITM-00001", 100, 1, 100, "", "privado@example.com", "", "privado@example.com", 1, "Sim"],
+    ["COT-000002", "PRP-000001", "NEC-000002", "LOJ-002", "ITM-00001", 100, 2, 200, "", "privado@example.com", "", "privado@example.com", 1, "Sim"],
+  ]),
+};
+const groupedPublicQuotes = sandbox.buildPublicQuotesWorkspace({ getSheetByName: (name) => groupedPublicSheets[name] || null });
+assert.equal(groupedPublicQuotes.schemaMode, "GROUPED");
+assert.equal(groupedPublicQuotes.quotes.length, 1);
+assert.equal(groupedPublicQuotes.quotes[0].lines.length, 2);
+assert.equal(groupedPublicQuotes.quotes[0].quantityTotal, 3);
+assert.equal(groupedPublicQuotes.quotes[0].total, 325);
+assert.doesNotMatch(JSON.stringify(groupedPublicQuotes), /"PRP-000001"|"FOR-000001"|privado|https:\/\/privado|Nota privada/i);
 
 sandbox.SpreadsheetApp = { openById: (id) => {
   assert.equal(id, "DEV_TEST");
@@ -435,3 +540,7 @@ console.log("✓ PENDENTE_DEFINICAO é bloqueada e CNPJ/CPF normalizado não dup
 console.log("✓ Status e Selecionada permanecem consistentes ao trocar a proposta escolhida");
 console.log("✓ primeira linha de ID vazia é usada mesmo com fórmulas até o fim da grade");
 console.log("✓ linhas físicas são preservadas e IDs duplicados bloqueiam edições ambíguas");
+console.log("✓ runtime dual bloqueia gravações antes da migração e detecta estrutura parcial");
+console.log("✓ escopo agrupado deriva quantidades, respeita Lojas_Permitidas e limita a um item");
+console.log("✓ comparação usa assinatura canônica e seleção sobreposta é bloqueada sem desmontagem automática");
+console.log("✓ DTO público agrupado preserva totais e escopo sem expor fornecedor, proposta ou campos internos reais");

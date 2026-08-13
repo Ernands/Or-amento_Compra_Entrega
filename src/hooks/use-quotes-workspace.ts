@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useAuth } from "@/auth/auth-context";
 import { createOperationsRepository, createPublicOperationsRepository } from "@/data/repositories/create-operations-repository";
-import type { CreateQuoteInput, CreateSupplierInput, DeleteQuoteInput, QuotesWorkspace, SelectQuoteInput, UpdateQuoteInput } from "@/domain/entities";
+import type { CreateQuoteInput, CreateSupplierInput, DeleteQuoteInput, QuotesWorkspace, ReopenQuoteInput, SelectQuoteInput, UpdateQuoteInput } from "@/domain/entities";
 
 type WorkspaceState =
   | { status: "loading" }
@@ -54,6 +54,12 @@ export function useQuotesWorkspace() {
     await afterWrite();
   }, [afterWrite, repository]);
 
+  const reopenQuote = useCallback(async (input: ReopenQuoteInput) => {
+    if (!repository) throw new Error("SessÃ£o nÃ£o encontrada.");
+    await repository.reopenQuote(input);
+    await afterWrite();
+  }, [afterWrite, repository]);
+
   const deleteQuote = useCallback(async (input: DeleteQuoteInput) => {
     if (!repository) throw new Error("Sessão não encontrada.");
     await repository.deleteQuote(input);
@@ -66,5 +72,5 @@ export function useQuotesWorkspace() {
     await afterWrite();
   }, [afterWrite, repository]);
 
-  return { state, refresh, createSupplier, createQuote, updateQuote, deleteQuote, selectQuote };
+  return { state, refresh, createSupplier, createQuote, updateQuote, reopenQuote, deleteQuote, selectQuote };
 }

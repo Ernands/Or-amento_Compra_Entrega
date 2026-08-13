@@ -2,7 +2,7 @@
 
 Este roteiro prepara a migração controlada de `05_COTACOES` para o modelo em que uma proposta comercial pode possuir vários vínculos de necessidades. A função não é chamada pelo frontend, não executa `setupTechnicalColumns()` e nunca deve ser adicionada ao dispatch HTTP.
 
-> **Importante:** não execute a migração enquanto o backend e o frontend operacionais ainda estiverem usando o contrato legado de `05_COTACOES`. O código desta entrega deixa a pré-validação e a migração prontas para revisão e execução manual posterior, mas a execução deve aguardar a implantação do runtime de propostas agrupadas.
+> **Importante:** não execute a migração enquanto o backend e o frontend operacionais ainda estiverem usando o contrato legado de `05_COTACOES`. Depois de implantar o runtime dual, confirme primeiro na tela o estado `Pré-migração — somente leitura`, repita a pré-validação e siga a ordem detalhada em `docs/PROPOSTAS_COTACAO_OPERACIONAL.md`.
 
 ## Estrutura de destino
 

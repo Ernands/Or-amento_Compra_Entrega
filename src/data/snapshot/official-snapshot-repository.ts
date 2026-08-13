@@ -201,6 +201,10 @@ export class OfficialSnapshotRepository implements OperationsRepository {
     throw new Error("O snapshot local é somente leitura.");
   }
 
+  async reopenQuote(): Promise<never> {
+    throw new Error("O snapshot local é somente leitura.");
+  }
+
   async deleteQuote(): Promise<never> {
     throw new Error("O snapshot local é somente leitura.");
   }

@@ -1,7 +1,7 @@
 import { PublicAppsScriptClient } from "@/data/api/apps-script-client";
 import type { ViewBootstrapPayload } from "@/data/api/apps-script-operations-repository";
 import type { OperationsRepository } from "@/data/repositories/operations-repository";
-import type { DataSourceInfo, Item, Necessity, Quote, QuotesWorkspace, Store, Supplier } from "@/domain/entities";
+import type { DataSourceInfo, Item, Necessity, Quote, QuoteLine, QuotesWorkspace, Store, Supplier } from "@/domain/entities";
 
 interface PublicBootstrapPayload {
   source: Pick<DataSourceInfo, "kind" | "status" | "readOnly" | "checkedAt" | "message">;
@@ -13,7 +13,10 @@ interface PublicBootstrapPayload {
 
 interface PublicQuotesPayload {
   suppliers: Array<Pick<Supplier, "id" | "name">>;
-  quotes: Array<Pick<Quote, "id" | "necessityId" | "storeId" | "itemId" | "supplierId" | "quantity" | "total" | "leadTimeDays" | "status" | "selected">>;
+  quotes: Array<Pick<Quote, "id" | "itemId" | "supplierId" | "necessityIds" | "storeIds" | "scopeSignature" | "quantityTotal" | "total" | "leadTimeDays" | "status" | "selected"> & {
+    lines: Array<Pick<QuoteLine, "id" | "proposalId" | "necessityId" | "storeId" | "itemId" | "quantity">>;
+  }>;
+  schemaMode: QuotesWorkspace["schemaMode"];
   checkedAt: string;
 }
 
@@ -40,6 +43,7 @@ export class PublicAppsScriptOperationsRepository implements OperationsRepositor
   async createSupplier(): Promise<never> { throw authRequired(); }
   async createQuote(): Promise<never> { throw authRequired(); }
   async updateQuote(): Promise<never> { throw authRequired(); }
+  async reopenQuote(): Promise<never> { throw authRequired(); }
   async deleteQuote(): Promise<never> { throw authRequired(); }
   async selectQuote(): Promise<never> { throw authRequired(); }
   async updateStore(): Promise<never> { throw authRequired(); }
@@ -80,8 +84,10 @@ function hydratePublicQuotes(payload: PublicQuotesPayload): QuotesWorkspace {
       rating: null, active: true, lastPurchase: "", notes: "", website: "", version: 0,
     })),
     quotes: payload.quotes.map((quote) => ({
-      id: quote.id, necessityId: quote.necessityId, storeId: quote.storeId, itemId: quote.itemId,
-      supplierId: quote.supplierId, quantity: quote.quantity, total: quote.total, leadTimeDays: quote.leadTimeDays,
+      id: quote.id, itemId: quote.itemId, supplierId: quote.supplierId,
+      lines: quote.lines.map((line) => ({ ...line, unitPrice: 0, subtotal: 0, version: 0, active: true })),
+      necessityIds: quote.necessityIds, storeIds: quote.storeIds, scopeSignature: quote.scopeSignature,
+      quantityTotal: quote.quantityTotal, subtotalItems: 0, total: quote.total, leadTimeDays: quote.leadTimeDays,
       status: quote.status, selected: quote.selected, origin: "", unitPrice: 0, freight: 0, otherCosts: 0,
       paymentMethod: "", proposalValidUntil: "", link: "", supplierRating: null, quoteDate: "", responsible: "",
       notes: "", version: 0, active: true,
@@ -89,6 +95,7 @@ function hydratePublicQuotes(payload: PublicQuotesPayload): QuotesWorkspace {
     routes: [],
     options: { statuses: [], origins: [], paymentMethods: [] },
     permissions: { view: true, create: false, edit: false, delete: false, select: false, createSupplier: false },
+    schemaMode: payload.schemaMode || "LEGACY",
     checkedAt: payload.checkedAt,
   };
 }
