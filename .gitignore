@@ -1,0 +1,38 @@
+# dependencies
+/node_modules
+
+# production
+/dist
+/apps-script/dist
+
+# testing
+/coverage
+
+# local environment
+.env*
+!.env.example
+
+# credentials and local authentication
+.npmrc
+.clasp.json
+.clasprc.json
+.secrets/
+credentials*.json
+client_secret*.json
+service-account*.json
+service_account*.json
+secrets*.json
+token*.json
+*.key
+*.p12
+*.pfx
+*.keystore
+
+# misc
+.DS_Store
+*.pem
+*.log
+*.err
+
+# typescript
+*.tsbuildinfo

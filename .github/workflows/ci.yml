@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint and TypeScript
+        run: npm run check
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build Apps Script
+        run: npm run apps-script:build
+
+      - name: Build web app
+        run: npm run build
+        env:
+          VITE_APPS_SCRIPT_URL: ${{ vars.VITE_APPS_SCRIPT_URL || 'https://script.google.com/macros/s/AKfycbx0J8xvQjx4zRKrXmHl4_7unWzZapa3shczwD-SUShBCXIP5DhscCVFJHaZ44s8RjvPNw/exec' }}
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID || '636511329976-k25aj1bnqrn7ncltfsv526d0q467jdou.apps.googleusercontent.com' }}
