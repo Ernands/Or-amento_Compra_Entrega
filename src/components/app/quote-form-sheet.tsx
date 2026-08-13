@@ -29,9 +29,10 @@ export function QuoteFormSheet(props: QuoteFormSheetProps) {
   const { quote, stores, items, necessities, suppliers, routes, options, onOpenChange, onCreate, onUpdate } = props;
   const initialNeed = quote?.necessityId || props.initialNecessityId || "";
   const initialStore = quote?.storeId || necessities.find((need) => need.id === initialNeed)?.storeId || stores[0]?.id || "";
+  const initialPlannedQuantity = necessities.find((need) => need.id === initialNeed)?.quantity ?? quote?.quantity ?? 1;
   const [storeId, setStoreId] = useState(initialStore);
   const [necessityId, setNecessityId] = useState(initialNeed);
-  const [form, setForm] = useState<QuoteValuesInput>(() => quote ? quoteValues(quote) : defaultValues(necessities.find((need) => need.id === initialNeed)?.quantity, options));
+  const [form, setForm] = useState<QuoteValuesInput>(() => quote ? quoteValues(quote, initialPlannedQuantity) : defaultValues(initialPlannedQuantity, options));
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -89,7 +90,7 @@ export function QuoteFormSheet(props: QuoteFormSheetProps) {
             {selectedItem ? <div className="rounded-lg border bg-muted/30 p-3 text-xs sm:col-span-2"><p className="font-medium">{selectedItem.name} · {selectedItem.operationalCode}</p><p className="mt-1 text-muted-foreground">Rotas cadastradas: {suggestedRoutes.length ? suggestedRoutes.map((route) => `${route.order}. ${route.originDestination}`).join(" → ") : "nenhuma"}</p></div> : null}
             <Field label="Fornecedor" htmlFor="quote-supplier"><select id="quote-supplier" value={form.supplierId} onChange={(event) => update("supplierId", event.target.value)} required className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"><option value="">Selecione</option>{activeSuppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select></Field>
             <Field label="Origem da cotação" htmlFor="quote-origin"><select id="quote-origin" value={form.origin} onChange={(event) => update("origin", event.target.value)} required className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"><option value="">Selecione</option>{options.origins.map((origin) => <option key={origin} value={origin}>{origin}</option>)}</select></Field>
-            <Field label="Quantidade" htmlFor="quote-quantity"><Input id="quote-quantity" type="number" min="0.01" step="0.01" value={form.quantity} onChange={(event) => update("quantity", Number(event.target.value))} required /></Field>
+            <Field label="Quantidade planejada" htmlFor="quote-quantity"><Input id="quote-quantity" type="number" value={form.quantity} readOnly aria-describedby="quote-quantity-help" className="bg-muted" /><p id="quote-quantity-help" className="mt-1 text-xs text-muted-foreground">Derivada de Qtd_Planejada da necessidade e não editável na cotação.</p></Field>
             <Field label="Preço unitário" htmlFor="quote-unit-price"><Input id="quote-unit-price" type="number" min="0" step="0.01" value={form.unitPrice} onChange={(event) => update("unitPrice", Number(event.target.value))} required /></Field>
             <Field label="Frete" htmlFor="quote-freight"><Input id="quote-freight" type="number" min="0" step="0.01" value={form.freight} onChange={(event) => update("freight", Number(event.target.value))} required /></Field>
             <Field label="Outros custos" htmlFor="quote-other-costs"><Input id="quote-other-costs" type="number" min="0" step="0.01" value={form.otherCosts} onChange={(event) => update("otherCosts", Number(event.target.value))} required /></Field>
@@ -116,8 +117,8 @@ function defaultValues(quantity = 1, options: QuoteOptions): QuoteValuesInput {
   return { supplierId: "", origin: options.origins[0] || "", unitPrice: 0, quantity, freight: 0, otherCosts: 0, paymentMethod: options.paymentMethods[0] || "", leadTimeDays: 0, proposalValidUntil: "", link: "", status: options.statuses[0] || "RASCUNHO", quoteDate: localDate(), notes: "" };
 }
 
-function quoteValues(quote: Quote): QuoteValuesInput {
-  return { supplierId: quote.supplierId, origin: quote.origin, unitPrice: quote.unitPrice, quantity: quote.quantity, freight: quote.freight, otherCosts: quote.otherCosts, paymentMethod: quote.paymentMethod, leadTimeDays: quote.leadTimeDays, proposalValidUntil: quote.proposalValidUntil, link: quote.link, status: quote.status === "RASCUNHO" || quote.status === "EM_ANDAMENTO" || quote.status === "RECEBIDA" ? quote.status : "RECEBIDA", quoteDate: quote.quoteDate, notes: quote.notes };
+function quoteValues(quote: Quote, plannedQuantity: number): QuoteValuesInput {
+  return { supplierId: quote.supplierId, origin: quote.origin, unitPrice: quote.unitPrice, quantity: plannedQuantity, freight: quote.freight, otherCosts: quote.otherCosts, paymentMethod: quote.paymentMethod, leadTimeDays: quote.leadTimeDays, proposalValidUntil: quote.proposalValidUntil, link: quote.link, status: quote.status === "RASCUNHO" || quote.status === "EM_ANDAMENTO" || quote.status === "RECEBIDA" ? quote.status : "RECEBIDA", quoteDate: quote.quoteDate, notes: quote.notes };
 }
 
 function localDate() {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { calculateQuoteTotals } from "./quotes";
+import { areQuoteQuantitiesComparable, calculateQuoteTotals } from "./quotes";
 
 describe("calculateQuoteTotals", () => {
   it("calcula subtotal e total com arredondamento monetário", () => {
@@ -10,5 +10,12 @@ describe("calculateQuoteTotals", () => {
   it("rejeita quantidade zero e valores negativos", () => {
     expect(() => calculateQuoteTotals({ quantity: 0, unitPrice: 10, freight: 0, otherCosts: 0 })).toThrow();
     expect(() => calculateQuoteTotals({ quantity: 1, unitPrice: -1, freight: 0, otherCosts: 0 })).toThrow();
+  });
+});
+
+describe("areQuoteQuantitiesComparable", () => {
+  it("permite comparar totais somente quando todas as quantidades são iguais", () => {
+    expect(areQuoteQuantitiesComparable([27, 27, 27])).toBe(true);
+    expect(areQuoteQuantitiesComparable([27, 10])).toBe(false);
   });
 });

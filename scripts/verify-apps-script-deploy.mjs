@@ -32,6 +32,11 @@ assert.match(deployCode, /function createQuote[\s\S]*?return withScriptLock\(/, 
 assert.match(deployCode, /function updateQuote[\s\S]*?findVersionedRow\(/, "updateQuote deve validar version.");
 assert.match(deployCode, /function selectQuote[\s\S]*?findVersionedRow\(/, "selectQuote deve validar version.");
 assert.match(deployCode, /APP_CONFIG\.sheets\.lists/, "Cotações deve validar opções pela aba 14_LISTAS.");
+assert.match(deployCode, /function createQuote[\s\S]*?derivePlannedQuoteQuantity/, "createQuote deve derivar a quantidade planejada.");
+assert.match(deployCode, /function updateQuote[\s\S]*?derivePlannedQuoteQuantity/, "updateQuote deve preservar a quantidade planejada.");
+assert.match(deployCode, /function selectQuote[\s\S]*?isQuoteMarkedSelected/, "selectQuote deve remover qualquer seleção anterior inconsistente.");
+assert.match(deployCode, /function createSupplier[\s\S]*?hasDuplicateNormalizedTaxId/, "createSupplier deve bloquear CNPJ/CPF normalizado duplicado.");
+assert.match(deployCode, /function createQuote[\s\S]*?assertNecessityCanBeQuoted/, "createQuote deve validar o status da necessidade.");
 assert.match(deployCode, /case "technicalStatus":/, "A ação technicalStatus não está no dispatch autenticado.");
 assert.match(deployCode, /function buildTechnicalStatus\(/, "buildTechnicalStatus ausente.");
 assert.match(deployCode, /function inspectTechnicalTable\(/, "Inspeção técnica leve ausente.");
@@ -150,6 +155,41 @@ assert.throws(
   "O backend deve rejeitar status desconhecido em vez de convertê-lo em rascunho.",
 );
 
+assert.equal(sandbox.derivePlannedQuoteQuantity(27, 27), 27);
+assert.equal(sandbox.derivePlannedQuoteQuantity(undefined, 27), 27);
+assert.throws(
+  () => sandbox.derivePlannedQuoteQuantity(10, 27),
+  /Qtd_Planejada/,
+  "A quantidade enviada pelo cliente não pode divergir de Qtd_Planejada.",
+);
+assert.equal(sandbox.areQuoteQuantitiesComparable([27, 27]), true);
+assert.equal(sandbox.areQuoteQuantitiesComparable([27, 10]), false);
+assert.throws(
+  () => sandbox.assertNecessityCanBeQuoted("Pendente definição"),
+  /Defina o item/,
+  "PENDENTE_DEFINICAO não pode ser cotada.",
+);
+assert.equal(sandbox.assertNecessityCanBeQuoted("Não iniciado"), "NAO_INICIADO");
+assert.throws(
+  () => sandbox.assertNecessityCanBeQuoted("Status desconhecido"),
+  /não aceita novas cotações/,
+  "Status desconhecido não pode ser tratado como NAO_INICIADO.",
+);
+
+assert.equal(sandbox.hasDuplicateNormalizedTaxId(["12.345.678/0001-90"], "12345678000190"), true);
+assert.equal(sandbox.hasDuplicateNormalizedTaxId(["123.456.789-01"], "98765432100"), false);
+
+const selectionTable = { normalizedHeaders: ["status", "selecionada"] };
+const targetQuote = ["Recebida", "Não"];
+const previousQuote = ["Selecionada", "Não"];
+assert.equal(sandbox.isQuoteMarkedSelected(selectionTable, previousQuote), true, "Status=Selecionada deve ser reconhecido mesmo com flag inconsistente.");
+sandbox.applyQuoteSelectionState(selectionTable, targetQuote, true, []);
+sandbox.applyQuoteSelectionState(selectionTable, previousQuote, false, []);
+assert.deepEqual(targetQuote, ["Selecionada", "Sim"]);
+assert.deepEqual(previousQuote, ["Recebida", "Não"]);
+assert.equal(sandbox.isQuoteSelectionConsistent(selectionTable, targetQuote), true);
+assert.equal(sandbox.isQuoteSelectionConsistent(selectionTable, previousQuote), false);
+
 console.log("✓ Code.gs corresponde ao JavaScript compilado");
 console.log("✓ Manifesto de implantação sincronizado");
 console.log("✓ urlFetchWhitelist limitada a https://oauth2.googleapis.com/tokeninfo");
@@ -160,3 +200,6 @@ console.log("✓ updateStore e updateItem compilados com permissão centralizada
 console.log("✓ technicalStatus autenticado verifica 12 abas lendo no máximo 10 linhas por aba");
 console.log("✓ contrato de Cotações compilado com lock, version e dispatch autenticado");
 console.log("✓ totais são calculados no backend e opções são validadas por 14_LISTAS");
+console.log("✓ quantidade deriva de Qtd_Planejada e divergências são rejeitadas");
+console.log("✓ PENDENTE_DEFINICAO é bloqueada e CNPJ/CPF normalizado não duplica");
+console.log("✓ Status e Selecionada permanecem consistentes ao trocar a proposta escolhida");

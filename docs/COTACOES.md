@@ -69,7 +69,9 @@ Payload vazio. Retorna `suppliers`, `quotes`, `routes`, `options`, `permissions`
 }
 ```
 
-O servidor calcula `Valor_Total = Quantidade × Preço_Unitário + Frete + Outros_Custos`. Loja e item são derivados da necessidade e nunca aceitos do navegador. A primeira cotação de uma necessidade em `NAO_INICIADO` move a necessidade para `EM_COTACAO`.
+O campo `quantity` é enviado apenas como conferência de integridade. O servidor deriva o valor efetivo de `Qtd_Planejada` em `03_NECESSIDADES` e rejeita qualquer divergência; o formulário o exibe como somente leitura. Quantidades parciais não são suportadas nesta fase.
+
+O servidor calcula `Valor_Total = Qtd_Planejada × Preço_Unitário + Frete + Outros_Custos`. Loja e item também são derivados da necessidade e nunca aceitos do navegador. Uma necessidade em `PENDENTE_DEFINICAO` não pode ser cotada. A primeira cotação de uma necessidade em `NAO_INICIADO` move a necessidade para `EM_COTACAO`.
 
 ### `updateQuote`
 
@@ -77,8 +79,8 @@ Recebe `id`, `version`, `changes` com todos os campos editáveis de `createQuote
 
 ### `selectQuote`
 
-Recebe `id`, `version` e `reason` opcional. Somente uma proposta `RECEBIDA` e dentro da validade pode ser selecionada. A ação prepara a informação para o futuro módulo Aprovações, mas não cria aprovação nem avança a necessidade automaticamente.
+Recebe `id`, `version` e `reason` opcional. Somente uma proposta `RECEBIDA`, dentro da validade e pertencente a um grupo com quantidades iguais pode ser selecionada. Dentro do mesmo `ScriptLock`, a ação grava `Status=Selecionada` e `Selecionada=Sim` no alvo e restaura `Status=Recebida` e `Selecionada=Não` em qualquer seleção anterior da necessidade. A ação prepara a informação para o futuro módulo Aprovações, mas não cria aprovação nem avança a necessidade automaticamente.
 
 ## Garantias de gravação
 
-As ações validam permissão e escopo no backend, usam `LockService`, conferem `version`, preservam IDs internos, preenchem os campos técnicos e registram `12_HISTORICO`. Operações multiaba possuem compensação local se a auditoria falhar.
+As ações validam permissão e escopo no backend, usam `LockService`, conferem `version`, preservam IDs internos, preenchem os campos técnicos e registram `12_HISTORICO`. Operações multiaba possuem compensação local se a auditoria falhar. Quando informado, `CNPJ_CPF` é normalizado para apenas dígitos durante a verificação de duplicidade, independentemente da máscara armazenada.

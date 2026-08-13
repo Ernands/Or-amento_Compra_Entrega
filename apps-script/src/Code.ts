@@ -247,10 +247,8 @@ function createSupplier(
     const table = readTable(spreadsheet, APP_CONFIG.sheets.suppliers, ["ID_Fornecedor", "Fornecedor", "CNPJ_CPF", "Ativo", "created_at", "created_by", "updated_at", "updated_by", "version"]);
     const name = validateRequiredText(payload.name);
     const taxId = validateTaxId(payload.taxId);
-    if (taxId) {
-      const duplicate = table.rows.some((row) => onlyDigits(cell(table, row, "CNPJ_CPF")) === onlyDigits(taxId));
-      if (duplicate) throw new ApiException("DUPLICATE_RECORD", "Já existe um fornecedor com este CNPJ/CPF.");
-    }
+    const registeredTaxIds = table.rows.map((row) => cell(table, row, "CNPJ_CPF"));
+    if (taxId && hasDuplicateNormalizedTaxId(registeredTaxIds, taxId)) throw new ApiException("DUPLICATE_RECORD", "Já existe um fornecedor com este CNPJ/CPF.");
     const id = nextInternalId(table, "ID_Fornecedor", "FOR", 6);
     const now = new Date();
     const row = Array(table.headers.length).fill("");
@@ -286,16 +284,14 @@ function createQuote(
   assertModulePermission(spreadsheet, user, "Cotações", "Criar");
   return withScriptLock(() => {
     const necessityId = requireString(payload.necessityId, "necessityId");
-    const necessitiesTable = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "ID_Loja", "ID_Item", "Status", "version", "updated_at", "updated_by"]);
+    const necessitiesTable = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "ID_Loja", "ID_Item", "Qtd_Planejada", "Status", "version", "updated_at", "updated_by"]);
     const necessityMatch = findRowById(necessitiesTable, "ID_Necessidade", necessityId, "Necessidade");
     const necessityRow = necessityMatch.row.slice();
     const storeId = cell(necessitiesTable, necessityRow, "ID_Loja");
     const itemId = cell(necessitiesTable, necessityRow, "ID_Item");
     assertStoreScope(user, storeId);
-    const necessityStatus = normalizeStatus(cell(necessitiesTable, necessityRow, "Status"));
-    if (["NAO_INICIADO", "EM_COTACAO"].indexOf(necessityStatus) < 0) {
-      throw new ApiException("INVALID_STATUS", necessityStatus === "PENDENTE_DEFINICAO" ? "Defina o item antes de iniciar cotações." : "Esta necessidade não aceita novas cotações no status atual.");
-    }
+    const necessityStatus = assertNecessityCanBeQuoted(cell(necessitiesTable, necessityRow, "Status"));
+    const plannedQuantity = validatePositiveNumber(cell(necessitiesTable, necessityRow, "Qtd_Planejada"));
 
     const suppliersTable = readTable(spreadsheet, APP_CONFIG.sheets.suppliers, ["ID_Fornecedor", "Fornecedor", "Nota_Fornecedor", "Ativo"]);
     const supplierId = requireString(payload.supplierId, "supplierId");
@@ -303,7 +299,7 @@ function createQuote(
     if (!isYes(cell(suppliersTable, supplier, "Ativo"))) throw new ApiException("VALIDATION_ERROR", "O fornecedor selecionado está inativo.");
 
     const table = readTable(spreadsheet, APP_CONFIG.sheets.quotes, ["ID_Cotação", "ID_Necessidade", "ID_Loja", "ID_Item", "ID_Fornecedor", "Valor_Total", "Status", "Selecionada", "created_at", "created_by", "updated_at", "updated_by", "version", "ativo"]);
-    const values = validateQuoteValues(payload, readQuoteOptions(spreadsheet));
+    const values = validateQuoteValues(payload, readQuoteOptions(spreadsheet), plannedQuantity);
     const id = nextInternalId(table, "ID_Cotação", "COT", 6);
     const now = new Date();
     const row = Array(table.headers.length).fill("");
@@ -367,7 +363,7 @@ function updateQuote(
     const id = requireString(payload.id, "id");
     const expectedVersion = requirePositiveInteger(payload.version, "version");
     const changes = requireChanges(payload.changes, ["supplierId", "origin", "unitPrice", "quantity", "freight", "otherCosts", "paymentMethod", "leadTimeDays", "proposalValidUntil", "link", "status", "quoteDate", "notes"]);
-    const table = readTable(spreadsheet, APP_CONFIG.sheets.quotes, ["ID_Cotação", "ID_Loja", "ID_Fornecedor", "Status", "Selecionada", "version", "updated_at", "updated_by"]);
+    const table = readTable(spreadsheet, APP_CONFIG.sheets.quotes, ["ID_Cotação", "ID_Necessidade", "ID_Loja", "ID_Fornecedor", "Status", "Selecionada", "version", "updated_at", "updated_by"]);
     const found = findVersionedRow(table, "ID_Cotação", id, expectedVersion, "Cotação");
     assertStoreScope(user, cell(table, found.current, "ID_Loja"));
     if (isYes(cell(table, found.current, "Selecionada")) || normalizeQuoteStatus(cell(table, found.current, "Status")) === "SELECIONADA") {
@@ -377,7 +373,11 @@ function updateQuote(
     const supplierId = requireString(changes.supplierId, "supplierId");
     const supplier = findRowById(suppliersTable, "ID_Fornecedor", supplierId, "Fornecedor").row;
     if (!isYes(cell(suppliersTable, supplier, "Ativo"))) throw new ApiException("VALIDATION_ERROR", "O fornecedor selecionado está inativo.");
-    const values = validateQuoteValues(changes, readQuoteOptions(spreadsheet));
+    const necessitiesTable = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "Qtd_Planejada"]);
+    const necessityId = cell(table, found.current, "ID_Necessidade");
+    const necessity = findRowById(necessitiesTable, "ID_Necessidade", necessityId, "Necessidade").row;
+    const plannedQuantity = validatePositiveNumber(cell(necessitiesTable, necessity, "Qtd_Planejada"));
+    const values = validateQuoteValues(changes, readQuoteOptions(spreadsheet), plannedQuantity);
     const audited: Array<{ field: string; previous: unknown; next: unknown }> = [];
     applyChange(table, found.current, "ID_Fornecedor", supplierId, (value) => value, audited);
     applyQuoteChanges(table, found.current, values, audited);
@@ -396,7 +396,7 @@ function selectQuote(
   return withScriptLock(() => {
     const id = requireString(payload.id, "id");
     const expectedVersion = requirePositiveInteger(payload.version, "version");
-    const table = readTable(spreadsheet, APP_CONFIG.sheets.quotes, ["ID_Cotação", "ID_Necessidade", "ID_Loja", "Status", "Selecionada", "Validade_Proposta", "version", "updated_at", "updated_by"]);
+    const table = readTable(spreadsheet, APP_CONFIG.sheets.quotes, ["ID_Cotação", "ID_Necessidade", "ID_Loja", "Quantidade", "Status", "Selecionada", "Validade_Proposta", "version", "updated_at", "updated_by"]);
     const target = findVersionedRow(table, "ID_Cotação", id, expectedVersion, "Cotação");
     assertStoreScope(user, cell(table, target.current, "ID_Loja"));
     if (normalizeQuoteStatus(cell(table, target.current, "Status")) !== "RECEBIDA") throw new ApiException("INVALID_STATUS", "Somente propostas com status RECEBIDA podem ser selecionadas.");
@@ -404,9 +404,16 @@ function selectQuote(
     if (validUntil && validUntil < formatDateOnly(new Date())) throw new ApiException("EXPIRED_QUOTE", "A validade desta proposta expirou.");
 
     const necessityId = cell(table, target.current, "ID_Necessidade");
+    const comparableRows = table.rows.filter((row) => {
+      const status = normalizeQuoteStatus(cell(table, row, "Status"));
+      return cell(table, row, "ID_Necessidade") === necessityId && ["RECEBIDA", "SELECIONADA"].indexOf(status) >= 0;
+    });
+    if (!areQuoteQuantitiesComparable(comparableRows.map((row) => Number(cell(table, row, "Quantidade"))))) {
+      throw new ApiException("QUANTITY_MISMATCH", "Existem propostas com quantidades diferentes para esta necessidade. Corrija-as antes de selecionar uma proposta.");
+    }
     const affected = table.rows
       .map((row, rowIndex) => ({ row: row.slice(), rowIndex }))
-      .filter((entry) => cell(table, entry.row, "ID_Necessidade") === necessityId && (cell(table, entry.row, "ID_Cotação") === id || isYes(cell(table, entry.row, "Selecionada"))));
+      .filter((entry) => cell(table, entry.row, "ID_Necessidade") === necessityId && (cell(table, entry.row, "ID_Cotação") === id || isQuoteMarkedSelected(table, entry.row)));
     const writes: Array<{ range: GoogleAppsScript.Spreadsheet.Range; previous: unknown[]; next: unknown[] }> = [];
     const audits: AuditEntry[] = [];
     const now = new Date();
@@ -414,8 +421,7 @@ function selectQuote(
       const quoteId = cell(table, entry.row, "ID_Cotação");
       const selecting = quoteId === id;
       const changes: Array<{ field: string; previous: unknown; next: unknown }> = [];
-      applyChange(table, entry.row, "Selecionada", selecting, validateYesNo, changes);
-      applyChange(table, entry.row, "Status", selecting ? "Selecionada" : "Recebida", (value) => value, changes);
+      applyQuoteSelectionState(table, entry.row, selecting, changes);
       if (!changes.length) return;
       setCell(table, entry.row, "version", Number(cell(table, entry.row, "version") || 1) + 1);
       setCell(table, entry.row, "updated_at", now);
@@ -424,6 +430,8 @@ function selectQuote(
       writes.push({ range, previous: range.getValues()[0], next: entry.row });
       audits.push({ module: "COTACOES", recordId: quoteId, changes, reason: String(payload.reason || "Proposta escolhida para futura aprovação."), action: "SELECAO" });
     });
+    const selectedAfter = affected.filter((entry) => isQuoteSelectionConsistent(table, entry.row));
+    if (selectedAfter.length !== 1 || cell(table, selectedAfter[0].row, "ID_Cotação") !== id) throw new ApiException("INTERNAL_ERROR", "Não foi possível garantir uma única proposta selecionada para a necessidade.");
     try {
       writes.forEach((write) => write.range.setValues([write.next]));
       appendAuditBatch(spreadsheet, user, audits);
@@ -920,6 +928,35 @@ function validateDateOnly(value: unknown, field: string, required = false): stri
 function onlyDigits(value: string): string { return value.replace(/\D/g, ""); }
 function formatDateOnly(value: Date): string { return Utilities.formatDate(value, APP_CONFIG.timezone, "yyyy-MM-dd"); }
 
+function hasDuplicateNormalizedTaxId(registeredValues: string[], candidate: string): boolean {
+  const normalizedCandidate = onlyDigits(candidate);
+  return Boolean(normalizedCandidate) && registeredValues.some((value) => onlyDigits(String(value || "")) === normalizedCandidate);
+}
+
+function assertNecessityCanBeQuoted(value: string): string {
+  const key = normalizeHeader(value);
+  if (["naoiniciado", "emcotacao"].indexOf(key) >= 0) return normalizeStatus(value);
+  if (key === "pendentedefinicao") throw new ApiException("INVALID_STATUS", "Defina o item antes de iniciar cotações.");
+  throw new ApiException("INVALID_STATUS", "Esta necessidade não aceita novas cotações no status atual.");
+}
+
+function derivePlannedQuoteQuantity(requested: unknown, planned: unknown): number {
+  const plannedQuantity = validatePositiveNumber(planned);
+  if (requested !== undefined && requested !== null && requested !== "") {
+    const requestedQuantity = validatePositiveNumber(requested);
+    if (Math.abs(requestedQuantity - plannedQuantity) > 0.000001) {
+      throw new ApiException("QUANTITY_MISMATCH", "A quantidade da cotação deve ser igual à Qtd_Planejada da necessidade. Atualize os dados e tente novamente.");
+    }
+  }
+  return plannedQuantity;
+}
+
+function areQuoteQuantitiesComparable(quantities: number[]): boolean {
+  if (quantities.length < 2) return true;
+  const reference = quantities[0];
+  return quantities.every((quantity) => Number.isFinite(quantity) && Math.abs(quantity - reference) < 0.000001);
+}
+
 function readQuoteOptions(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet): QuoteOptionValues {
   const table = readTable(spreadsheet, APP_CONFIG.sheets.lists, ["Status Cotação", "Origem Cotação", "Forma Pagamento"]);
   const values = (header: string) => table.rows.map((row) => cell(table, row, header).trim()).filter((value, index, all) => Boolean(value) && all.indexOf(value) === index);
@@ -939,8 +976,8 @@ function validateListedValue(value: unknown, options: string[], field: string): 
   return match;
 }
 
-function validateQuoteValues(payload: Record<string, unknown>, options?: QuoteOptionValues): QuoteValidatedValues {
-  const quantity = validatePositiveNumber(payload.quantity);
+function validateQuoteValues(payload: Record<string, unknown>, options?: QuoteOptionValues, plannedQuantity?: number): QuoteValidatedValues {
+  const quantity = plannedQuantity === undefined ? validatePositiveNumber(payload.quantity) : derivePlannedQuoteQuantity(payload.quantity, plannedQuantity);
   const unitPrice = validateNonNegativeNumber(payload.unitPrice, "Preço unitário");
   const freight = validateNonNegativeNumber(payload.freight, "Frete");
   const otherCosts = validateNonNegativeNumber(payload.otherCosts, "Outros custos");
@@ -999,6 +1036,24 @@ function applyQuoteChanges(table: SheetTable, row: unknown[], values: QuoteValid
   applyChange(table, row, "Status", quoteStatusToSheet(values.status), (value) => value, audit);
   applyChange(table, row, "Data_Cotação", values.quoteDate, (value) => value, audit);
   applyChange(table, row, "Observações", values.notes, (value) => value, audit);
+}
+
+function isQuoteMarkedSelected(table: SheetTable, row: unknown[]): boolean {
+  return isYes(cell(table, row, "Selecionada")) || normalizeQuoteStatus(cell(table, row, "Status")) === "SELECIONADA";
+}
+
+function isQuoteSelectionConsistent(table: SheetTable, row: unknown[]): boolean {
+  return isYes(cell(table, row, "Selecionada")) && normalizeQuoteStatus(cell(table, row, "Status")) === "SELECIONADA";
+}
+
+function applyQuoteSelectionState(
+  table: SheetTable,
+  row: unknown[],
+  selected: boolean,
+  audit: Array<{ field: string; previous: unknown; next: unknown }>,
+): void {
+  applyChange(table, row, "Selecionada", selected, validateYesNo, audit);
+  applyChange(table, row, "Status", selected ? "Selecionada" : "Recebida", (value) => value, audit);
 }
 
 function applyChange(table: SheetTable, row: unknown[], header: string, rawValue: unknown, validator: (value: unknown) => unknown, audit: Array<{ field: string; previous: unknown; next: unknown }>): void {
