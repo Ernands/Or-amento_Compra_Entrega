@@ -258,7 +258,7 @@ function buildLegacyQuotesWorkspace(spreadsheet, user) {
     const allowedItemIds = Object.fromEntries(allowedNeeds.map((row) => [cell(necessitiesTable, row, "ID_Item"), true]));
     return {
         suppliers: suppliersTable.rows.map((row) => mapSupplier(suppliersTable, row)),
-        quotes: quotesTable.rows.filter((row) => isStoreAllowed(user, cell(quotesTable, row, "ID_Loja")) && isActiveQuoteRow(quotesTable, row)).map((row) => mapQuote(quotesTable, row)),
+        quotes: quotesTable.rows.filter((row) => isStoreAllowed(user, cell(quotesTable, row, "ID_Loja")) && isActiveQuoteRow(quotesTable, row)).map((row) => mapLegacyQuoteProposal(quotesTable, row)),
         routes: routesTable.rows.filter((row) => Boolean(allowedItemIds[cell(routesTable, row, "ID_Item")])).map((row) => mapPurchaseRoute(routesTable, row)),
         options,
         permissions: {
@@ -267,7 +267,7 @@ function buildLegacyQuotesWorkspace(spreadsheet, user) {
             edit: false,
             delete: false,
             select: false,
-            createSupplier: hasModulePermission(permissionTable, user, "Fornecedores", "Criar"),
+            createSupplier: false,
         },
         schemaMode: "LEGACY",
         checkedAt: new Date().toISOString(),

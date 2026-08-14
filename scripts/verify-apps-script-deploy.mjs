@@ -68,6 +68,9 @@ assert.match(deployCode, /function createSupplier[\s\S]*?hasDuplicateNormalizedT
 assert.match(deployCode, /function createQuote[\s\S]*?assertNecessityCanBeQuoted/, "createQuote deve validar o status da necessidade.");
 assert.match(deployCode, /function buildBootstrap[\s\S]*?activeQuoteNecessityIds/, "bootstrap deve informar necessidades com cotação ativa.");
 assert.match(deployCode, /function buildQuotesWorkspace[\s\S]*?isActiveQuoteRow/, "quotesWorkspace deve ocultar cotações excluídas.");
+const legacyWorkspaceCode = deployCode.slice(deployCode.indexOf("function buildLegacyQuotesWorkspace"), deployCode.indexOf("function quoteSchemaMode"));
+assert.match(legacyWorkspaceCode, /mapLegacyQuoteProposal\(quotesTable, row\)/, "quotesWorkspace LEGACY autenticado deve devolver o contrato de proposta usado pela tela.");
+assert.doesNotMatch(legacyWorkspaceCode, /mapQuote\(quotesTable, row\)/, "quotesWorkspace LEGACY não pode devolver o registro plano incompatível com a tela.");
 assert.match(deployCode, /findFirstWritableRow\(table, "ID_Cotação"\)/, "createQuote deve usar a primeira linha com ID vazio.");
 assert.match(deployCode, /function readTable[\s\S]*?rowNumbers/, "readTable deve preservar os números físicos das linhas.");
 assert.doesNotMatch(deployCode, /getLastRow\(\) \+ 1/, "Gravações não podem depender de getLastRow() + 1.");
@@ -221,6 +224,16 @@ assert.equal(migrationPlan.records[0].quoteId, "COT-000001");
 assert.equal(migrationPlan.records[0].proposalId, "PRP-000001");
 assert.equal(migrationPlan.records[0].subtotal, 575);
 assert.equal(migrationPlan.records[0].total, 579);
+
+const legacyQuotesTable = sandbox.readTable(legacyMigrationSpreadsheet(), "05_COTACOES", ["ID_Cotacao", "ID_Necessidade", "ID_Loja", "ID_Item", "ID_Fornecedor"]);
+const authenticatedLegacyQuote = sandbox.mapLegacyQuoteProposal(legacyQuotesTable, legacyQuotesTable.rows[0]);
+assert.equal(authenticatedLegacyQuote.id, "COT-000001");
+assert.equal(authenticatedLegacyQuote.storeIds.length, 1);
+assert.equal(authenticatedLegacyQuote.storeIds[0], "LOJ-001");
+assert.equal(authenticatedLegacyQuote.necessityIds.length, 1);
+assert.equal(authenticatedLegacyQuote.necessityIds[0], "NEC-000001");
+assert.equal(authenticatedLegacyQuote.lines.length, 1);
+assert.equal(authenticatedLegacyQuote.lines[0].necessityId, "NEC-000001");
 
 const invalidTotalRow = legacyQuoteRow.slice();
 invalidTotalRow[10] = 999;
