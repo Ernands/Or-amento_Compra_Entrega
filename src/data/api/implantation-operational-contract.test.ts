@@ -128,7 +128,8 @@ describe("contrato operacional real da Implantação", () => {
     expect(app).toContain("!capabilities?.view");
     expect(app).toContain("ImplantationErrorBoundary");
     expect(errorBoundary).toContain("A falha ficou isolada neste módulo");
-    expect(navigation).toContain('accessMode === "authenticated" && capabilities?.view');
+    expect(navigation).toContain('accessMode === "authenticated" && (loading || canView === true)');
+    expect(navigation).toContain("shouldShowImplantationNavigation(accessMode, implantationAccessLoading, capabilities?.view)");
   });
 
   it("mantém o Code.gs compilado sem ID DEV hardcoded nem novos escopos", () => {

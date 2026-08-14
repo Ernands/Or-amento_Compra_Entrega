@@ -38,9 +38,9 @@ const implantationItems = [
 
 function NavigationLinks({ onNavigate }: { onNavigate?: () => void }) {
   const { accessMode } = useAuth();
-  const { capabilities } = useImplantationAccess();
+  const { capabilities, loading: implantationAccessLoading } = useImplantationAccess();
   const { pathname } = useLocation();
-  const showImplantation = accessMode === "authenticated" && capabilities?.view;
+  const showImplantation = shouldShowImplantationNavigation(accessMode, implantationAccessLoading, capabilities?.view);
   const [supplyOpen, setSupplyOpen] = useState(() => supplyItems.some((item) => pathname.startsWith(item.href)));
   const [implantationOpen, setImplantationOpen] = useState(() => pathname.startsWith("/implantacao") || pathname.startsWith("/lojas"));
   const [administrationOpen, setAdministrationOpen] = useState(() => pathname.startsWith("/diagnostico"));
@@ -58,6 +58,10 @@ function NavigationLinks({ onNavigate }: { onNavigate?: () => void }) {
       {accessMode !== "visitor" ? <NavigationGroup label="Administração" open={administrationOpen} onToggle={() => setAdministrationOpen((current) => !current)}><NavigationItem item={{ href: "/diagnostico", label: "Diagnóstico", icon: SearchCheck }} pathname={pathname} onNavigate={onNavigate} nested /></NavigationGroup> : null}
     </nav>
   );
+}
+
+export function shouldShowImplantationNavigation(accessMode: string | null, loading: boolean, canView: boolean | undefined) {
+  return accessMode === "authenticated" && (loading || canView === true);
 }
 
 interface NavigationItemValue { href: string; label: string; icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }> }
