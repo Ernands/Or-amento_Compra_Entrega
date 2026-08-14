@@ -134,6 +134,7 @@ const items: Item[] = catalog.map(([operationalCode, group, area, name], index) 
     route1: "",
     route2: "",
     route3: "",
+    productLink: "",
     notes: "",
     version: 1,
   };
@@ -214,6 +215,10 @@ export class OfficialSnapshotRepository implements OperationsRepository {
   }
 
   async updateStore(): Promise<never> {
+    throw new Error("O snapshot local é somente leitura.");
+  }
+
+  async createItem(): Promise<never> {
     throw new Error("O snapshot local é somente leitura.");
   }
 

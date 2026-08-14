@@ -96,6 +96,7 @@ O teste autenticado de `bootstrap` também aceita `GOOGLE_ID_TOKEN` temporário.
 - `POST {"action":"technicalStatus","credential":"<Google ID token>","payload":{}}`: diagnóstico somente leitura das 12 abas; lê no máximo as 10 primeiras linhas de cada aba para localizar cabeçalhos e verificar colunas técnicas.
 - `POST {"action":"updateNecessity","credential":"<Google ID token>","payload":{...}}`: escrita versionada com permissão, validação de status, `LockService` e auditoria em `12_HISTORICO`.
 - `POST {"action":"updateStore","credential":"<Google ID token>","payload":{...}}`: edição versionada de lojas com escopo, permissão do módulo e auditoria.
+- `POST {"action":"createItem","credential":"<Google ID token>","payload":{...}}`: cadastro de item com ID interno gerado no backend, `LockService`, campos técnicos e auditoria.
 - `POST {"action":"updateItem","credential":"<Google ID token>","payload":{...}}`: edição versionada do catálogo com permissão do módulo e auditoria.
 - `POST {"action":"quotesWorkspace","credential":"<Google ID token>","payload":{}}`: leitura dual. Retorna `schemaMode=LEGACY` antes da migração e propostas agrupadas depois dela, sempre filtradas por `Lojas_Permitidas`.
 - `POST {"action":"createSupplier","credential":"<Google ID token>","payload":{...}}`: cadastro de fornecedor nos campos existentes de `04_FORNECEDORES`.
@@ -106,6 +107,16 @@ O teste autenticado de `bootstrap` também aceita `GOOGLE_ID_TOKEN` temporário.
 - `POST {"action":"selectQuoteProposal","credential":"<Google ID token>","payload":{"id":"PRP-000001","version":2,"reason":"..."}}`: seleção integral com bloqueio de necessidades sobrepostas e atualização para `AGUARDANDO_APROVACAO`.
 
 As ações legadas `createQuote`, `updateQuote`, `deleteQuote` e `selectQuote` não gravam mais e retornam `CLIENT_UPDATE_REQUIRED`. Antes da migração, as ações agrupadas retornam `QUOTE_MIGRATION_REQUIRED`.
+
+## Colunas funcionais desta versão
+
+Antes de usar os novos campos de escrita, acrescente manualmente, sem executar `setupTechnicalColumns()`:
+
+- em `02_ITENS`: `Link_Produto`;
+- em `16_PROPOSTAS_COTACAO`: `Quantidade_Parcelas` e `Possui_Entrada`;
+- em `14_LISTAS`, na coluna `Forma Pagamento`: o valor `Dinheiro`.
+
+As leituras continuam compatíveis enquanto as colunas ainda não existem. A tentativa de gravar link, parcelas ou entrada sem a estrutura correspondente retorna `STRUCTURE_REQUIRED`, sem escrita parcial. O roteiro está em `docs/CADASTROS_E_CONDICOES_COMERCIAIS.md`.
 
 O contrato completo e a ordem exata de implantação/migração estão em `docs/PROPOSTAS_COTACAO_OPERACIONAL.md`.
 

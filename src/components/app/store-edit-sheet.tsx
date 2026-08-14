@@ -25,7 +25,7 @@ export function StoreEditSheet({ store, open, onOpenChange, onSave }: StoreEditS
     manager: store.manager === "A cadastrar" ? "" : store.manager,
     email: store.email,
     phone: store.phone,
-    status: store.status,
+    status: storeStatusValue(store.status),
     notes: store.notes,
   }));
   const [reason, setReason] = useState("");
@@ -63,7 +63,13 @@ export function StoreEditSheet({ store, open, onOpenChange, onSave }: StoreEditS
             <Field label="Cidade" htmlFor="store-city"><Input id="store-city" value={form.city} onChange={(event) => update("city", event.target.value)} /></Field>
             <Field label="UF" htmlFor="store-state"><Input id="store-state" value={form.state} onChange={(event) => update("state", event.target.value.toLocaleUpperCase())} maxLength={2} /></Field>
             <Field label="Capital/UF de referência" htmlFor="store-capital"><Input id="store-capital" value={form.capitalUf} onChange={(event) => update("capitalUf", event.target.value)} /></Field>
-            <Field label="Status" htmlFor="store-status"><Input id="store-status" value={form.status} onChange={(event) => update("status", event.target.value)} required /></Field>
+            <Field label="Status" htmlFor="store-status">
+              <select id="store-status" value={form.status} onChange={(event) => update("status", event.target.value)} required className="h-9 w-full rounded-md border bg-transparent px-3 text-sm">
+                <option value="Ativa">Ativa</option>
+                <option value="A cadastrar">A cadastrar</option>
+                <option value="Inativa">Inativa</option>
+              </select>
+            </Field>
             <Field label="Responsável" htmlFor="store-manager" className="sm:col-span-2"><Input id="store-manager" value={form.manager} onChange={(event) => update("manager", event.target.value)} /></Field>
             <Field label="E-mail" htmlFor="store-email"><Input id="store-email" type="email" value={form.email} onChange={(event) => update("email", event.target.value)} /></Field>
             <Field label="Telefone" htmlFor="store-phone"><Input id="store-phone" value={form.phone} onChange={(event) => update("phone", event.target.value)} /></Field>
@@ -84,4 +90,11 @@ export function StoreEditSheet({ store, open, onOpenChange, onSave }: StoreEditS
 
 function Field({ label, htmlFor, className, children }: { label: string; htmlFor: string; className?: string; children: React.ReactNode }) {
   return <div className={className}><label htmlFor={htmlFor} className="mb-1.5 block text-xs font-medium text-foreground">{label}</label>{children}</div>;
+}
+
+function storeStatusValue(status: string): string {
+  const normalized = status.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR").replace(/\s/g, "");
+  if (normalized === "ativa") return "Ativa";
+  if (normalized === "inativa") return "Inativa";
+  return "A cadastrar";
 }

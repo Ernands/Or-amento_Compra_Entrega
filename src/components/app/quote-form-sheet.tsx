@@ -20,6 +20,7 @@ interface QuoteFormSheetProps {
   suppliers: Supplier[];
   routes: PurchaseRoute[];
   options: QuoteOptions;
+  paymentTermsSupported: boolean;
   onOpenChange: (open: boolean) => void;
   onCreate: (input: CreateQuoteInput) => Promise<void>;
   onUpdate: (input: UpdateQuoteInput) => Promise<void>;
@@ -129,6 +130,10 @@ export function QuoteFormSheet(props: QuoteFormSheetProps) {
             <Field label="Outros custos totais" htmlFor="quote-other-costs"><Input id="quote-other-costs" type="number" min="0" step="0.01" value={form.otherCosts} onChange={(event) => update("otherCosts", Number(event.target.value))} required /></Field>
             <div className="flex items-center gap-3 rounded-lg border bg-primary/5 p-3 sm:col-span-2"><Calculator className="size-5 text-primary" /><div className="grid flex-1 grid-cols-2 gap-3 text-sm"><span>Subtotal dos itens <strong className="block">{currencyFormatter.format(totals.subtotal)}</strong></span><span>Total da proposta <strong className="block">{currencyFormatter.format(totals.total)}</strong></span></div></div>
             <Field label="Forma de pagamento" htmlFor="quote-payment"><select id="quote-payment" value={form.paymentMethod} onChange={(event) => update("paymentMethod", event.target.value)} required className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"><option value="">Selecione</option>{options.paymentMethods.map((method) => <option key={method} value={method}>{method}</option>)}</select></Field>
+            {props.paymentTermsSupported ? <>
+              <Field label="Quantidade de parcelas" htmlFor="quote-installments"><Input id="quote-installments" type="number" min="1" max="120" step="1" value={form.installments} onChange={(event) => update("installments", Number(event.target.value))} required /></Field>
+              <Field label="Possui entrada?" htmlFor="quote-down-payment"><select id="quote-down-payment" value={form.hasDownPayment ? "true" : "false"} onChange={(event) => update("hasDownPayment", event.target.value === "true")} className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"><option value="false">Não</option><option value="true">Sim</option></select></Field>
+            </> : null}
             <Field label="Prazo (dias)" htmlFor="quote-lead"><Input id="quote-lead" type="number" min="0" step="1" value={form.leadTimeDays} onChange={(event) => update("leadTimeDays", Number(event.target.value))} required /></Field>
             <Field label="Data da cotação" htmlFor="quote-date"><Input id="quote-date" type="date" value={form.quoteDate} onChange={(event) => update("quoteDate", event.target.value)} required /></Field>
             <Field label="Validade da proposta" htmlFor="quote-valid-until"><Input id="quote-valid-until" type="date" value={form.proposalValidUntil} onChange={(event) => update("proposalValidUntil", event.target.value)} /></Field>
@@ -147,11 +152,11 @@ export function QuoteFormSheet(props: QuoteFormSheetProps) {
 }
 
 function defaultValues(options: QuoteOptions): QuoteValuesInput {
-  return { supplierId: "", origin: options.origins[0] || "", unitPrice: 0, freight: 0, otherCosts: 0, paymentMethod: options.paymentMethods[0] || "", leadTimeDays: 0, proposalValidUntil: "", link: "", status: options.statuses[0] || "RASCUNHO", quoteDate: localDate(), notes: "" };
+  return { supplierId: "", origin: options.origins[0] || "", unitPrice: 0, freight: 0, otherCosts: 0, paymentMethod: options.paymentMethods[0] || "", installments: 1, hasDownPayment: false, leadTimeDays: 0, proposalValidUntil: "", link: "", status: options.statuses[0] || "RASCUNHO", quoteDate: localDate(), notes: "" };
 }
 
 function quoteValues(quote: Quote): QuoteValuesInput {
-  return { supplierId: quote.supplierId, origin: quote.origin, unitPrice: quote.unitPrice, freight: quote.freight, otherCosts: quote.otherCosts, paymentMethod: quote.paymentMethod, leadTimeDays: quote.leadTimeDays, proposalValidUntil: quote.proposalValidUntil, link: quote.link, status: quote.status === "RASCUNHO" || quote.status === "EM_ANDAMENTO" || quote.status === "RECEBIDA" ? quote.status : "EM_ANDAMENTO", quoteDate: quote.quoteDate, notes: quote.notes };
+  return { supplierId: quote.supplierId, origin: quote.origin, unitPrice: quote.unitPrice, freight: quote.freight, otherCosts: quote.otherCosts, paymentMethod: quote.paymentMethod, installments: Math.max(1, quote.installments || 1), hasDownPayment: quote.hasDownPayment, leadTimeDays: quote.leadTimeDays, proposalValidUntil: quote.proposalValidUntil, link: quote.link, status: quote.status === "RASCUNHO" || quote.status === "EM_ANDAMENTO" || quote.status === "RECEBIDA" ? quote.status : "EM_ANDAMENTO", quoteDate: quote.quoteDate, notes: quote.notes };
 }
 
 function localDate() {

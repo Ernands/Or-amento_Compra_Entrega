@@ -1,6 +1,6 @@
 import { AppsScriptClient } from "@/data/api/apps-script-client";
 import type { OperationsRepository } from "@/data/repositories/operations-repository";
-import type { CreateQuoteInput, CreateSupplierInput, DataSourceInfo, DeleteQuoteInput, Item, Necessity, Quote, QuoteLine, QuotesWorkspace, ReopenQuoteInput, SelectQuoteInput, SessionUser, Store, Supplier, TechnicalStatus, UpdateItemInput, UpdateQuoteInput, UpdateStoreInput } from "@/domain/entities";
+import type { CreateItemInput, CreateQuoteInput, CreateSupplierInput, DataSourceInfo, DeleteQuoteInput, Item, Necessity, Quote, QuoteLine, QuotesWorkspace, ReopenQuoteInput, SelectQuoteInput, SessionUser, Store, Supplier, TechnicalStatus, UpdateItemInput, UpdateQuoteInput, UpdateStoreInput } from "@/domain/entities";
 
 export interface ViewBootstrapPayload {
   source: DataSourceInfo;
@@ -8,6 +8,10 @@ export interface ViewBootstrapPayload {
   items: Item[];
   necessities: Necessity[];
   activeQuoteNecessityIds?: string[];
+  capabilities?: {
+    createItem: boolean;
+    itemProductLink: boolean;
+  };
 }
 
 export interface BootstrapPayload extends ViewBootstrapPayload {
@@ -16,6 +20,7 @@ export interface BootstrapPayload extends ViewBootstrapPayload {
 
 export class AppsScriptOperationsRepository implements OperationsRepository {
   private bootstrapPromise?: Promise<BootstrapPayload>;
+  private paymentTermsSupported = false;
 
   constructor(private readonly client: AppsScriptClient) {}
 
@@ -46,7 +51,9 @@ export class AppsScriptOperationsRepository implements OperationsRepository {
 
   async getQuotesWorkspace() {
     const workspace = await this.client.call<AuthenticatedQuotesWorkspacePayload>("quotesWorkspace");
-    return normalizeAuthenticatedQuotesWorkspace(workspace);
+    const normalized = normalizeAuthenticatedQuotesWorkspace(workspace);
+    this.paymentTermsSupported = normalized.paymentTermsSupported;
+    return normalized;
   }
 
   createSupplier(input: CreateSupplierInput) {
@@ -54,11 +61,11 @@ export class AppsScriptOperationsRepository implements OperationsRepository {
   }
 
   createQuote(input: CreateQuoteInput) {
-    return this.client.call<{ quote: Quote }>("createQuoteProposal", input);
+    return this.client.call<{ quote: Quote }>("createQuoteProposal", this.paymentTermsSupported ? input : withoutPaymentTerms(input));
   }
 
   updateQuote(input: UpdateQuoteInput) {
-    return this.client.call<{ quote: Quote }>("updateQuoteProposal", input);
+    return this.client.call<{ quote: Quote }>("updateQuoteProposal", this.paymentTermsSupported ? input : { ...input, changes: withoutPaymentTerms(input.changes) });
   }
 
   reopenQuote(input: ReopenQuoteInput) {
@@ -77,8 +84,14 @@ export class AppsScriptOperationsRepository implements OperationsRepository {
     return this.client.call<{ store: Store }>("updateStore", input);
   }
 
-  updateItem(input: UpdateItemInput) {
-    return this.client.call<{ item: Item }>("updateItem", input);
+  createItem(input: CreateItemInput) {
+    return this.client.call<{ item: Item }>("createItem", input);
+  }
+
+  async updateItem(input: UpdateItemInput) {
+    const bootstrap = await this.getBootstrap();
+    const compatible = bootstrap.capabilities?.itemProductLink ? input : { ...input, changes: withoutProductLink(input.changes) };
+    return this.client.call<{ item: Item }>("updateItem", compatible);
   }
 }
 
@@ -118,6 +131,7 @@ export function normalizeAuthenticatedQuotesWorkspace(payload: AuthenticatedQuot
     },
     permissions,
     schemaMode,
+    paymentTermsSupported: schemaMode === "GROUPED" && payload.paymentTermsSupported === true,
     checkedAt: payload.checkedAt || new Date().toISOString(),
   };
 }
@@ -167,6 +181,8 @@ function normalizeAuthenticatedQuote(quote: LegacyQuotePayload): Quote {
     otherCosts: finiteNumber(quote.otherCosts),
     total: finiteNumber(quote.total),
     paymentMethod: quote.paymentMethod || "",
+    installments: quote.installments === undefined ? 0 : finiteNumber(quote.installments),
+    hasDownPayment: quote.hasDownPayment ?? false,
     leadTimeDays: finiteNumber(quote.leadTimeDays),
     proposalValidUntil: quote.proposalValidUntil || "",
     link: quote.link || "",
@@ -184,4 +200,17 @@ function normalizeAuthenticatedQuote(quote: LegacyQuotePayload): Quote {
 function finiteNumber(value: unknown): number {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
+}
+
+function withoutPaymentTerms<T extends { installments: number; hasDownPayment: boolean }>(input: T): Omit<T, "installments" | "hasDownPayment"> {
+  const compatible: Partial<T> = { ...input };
+  delete compatible.installments;
+  delete compatible.hasDownPayment;
+  return compatible as Omit<T, "installments" | "hasDownPayment">;
+}
+
+function withoutProductLink<T extends { productLink: string }>(input: T): Omit<T, "productLink"> {
+  const compatible: Partial<T> = { ...input };
+  delete compatible.productLink;
+  return compatible as Omit<T, "productLink">;
 }

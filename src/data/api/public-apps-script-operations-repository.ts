@@ -6,7 +6,7 @@ import type { DataSourceInfo, Item, Necessity, Quote, QuoteLine, QuotesWorkspace
 interface PublicBootstrapPayload {
   source: Pick<DataSourceInfo, "kind" | "status" | "readOnly" | "checkedAt" | "message">;
   stores: Array<Pick<Store, "id" | "name" | "city" | "state" | "status">>;
-  items: Array<Pick<Item, "id" | "operationalCode" | "group" | "area" | "name" | "definitionStatus" | "duplicateOperationalCode">>;
+  items: Array<Pick<Item, "id" | "operationalCode" | "group" | "area" | "name" | "definitionStatus" | "duplicateOperationalCode" | "active" | "productLink">>;
   necessities: Array<Pick<Necessity, "id" | "storeId" | "itemId" | "quantity" | "priority" | "status">>;
   activeQuoteNecessityIds: string[];
 }
@@ -47,6 +47,7 @@ export class PublicAppsScriptOperationsRepository implements OperationsRepositor
   async deleteQuote(): Promise<never> { throw authRequired(); }
   async selectQuote(): Promise<never> { throw authRequired(); }
   async updateStore(): Promise<never> { throw authRequired(); }
+  async createItem(): Promise<never> { throw authRequired(); }
   async updateItem(): Promise<never> { throw authRequired(); }
 }
 
@@ -67,13 +68,14 @@ function hydratePublicBootstrap(payload: PublicBootstrapPayload): ViewBootstrapP
     items: payload.items.map((item) => ({
       id: item.id, operationalCode: item.operationalCode, group: item.group, area: item.area, name: item.name,
       definitionStatus: item.definitionStatus, duplicateOperationalCode: item.duplicateOperationalCode,
-      specification: "", defaultQuantity: 1, active: true, route1: "", route2: "", route3: "", notes: "", version: 0,
+      specification: "", defaultQuantity: 1, active: item.active ?? true, route1: "", route2: "", route3: "", productLink: item.productLink ?? "", notes: "", version: 0,
     })),
     necessities: payload.necessities.map((necessity) => ({
       id: necessity.id, storeId: necessity.storeId, itemId: necessity.itemId, quantity: necessity.quantity,
       priority: necessity.priority, status: necessity.status, version: 0,
     })),
     activeQuoteNecessityIds: payload.activeQuoteNecessityIds,
+    capabilities: { createItem: false, itemProductLink: false },
   };
 }
 
@@ -89,13 +91,14 @@ function hydratePublicQuotes(payload: PublicQuotesPayload): QuotesWorkspace {
       necessityIds: quote.necessityIds, storeIds: quote.storeIds, scopeSignature: quote.scopeSignature,
       quantityTotal: quote.quantityTotal, subtotalItems: 0, total: quote.total, leadTimeDays: quote.leadTimeDays,
       status: quote.status, selected: quote.selected, origin: "", unitPrice: 0, freight: 0, otherCosts: 0,
-      paymentMethod: "", proposalValidUntil: "", link: "", supplierRating: null, quoteDate: "", responsible: "",
+      paymentMethod: "", installments: 1, hasDownPayment: false, proposalValidUntil: "", link: "", supplierRating: null, quoteDate: "", responsible: "",
       notes: "", version: 0, active: true,
     })),
     routes: [],
     options: { statuses: [], origins: [], paymentMethods: [] },
     permissions: { view: true, create: false, edit: false, delete: false, select: false, createSupplier: false },
     schemaMode: payload.schemaMode || "LEGACY",
+    paymentTermsSupported: false,
     checkedAt: payload.checkedAt,
   };
 }

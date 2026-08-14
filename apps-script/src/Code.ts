@@ -136,6 +136,8 @@ interface QuoteValidatedValues {
   otherCosts: number;
   total: number;
   paymentMethod: string;
+  installments: number;
+  hasDownPayment: boolean;
   leadTimeDays: number;
   proposalValidUntil: string;
   link: string;
@@ -277,6 +279,8 @@ function dispatchAuthenticatedAction(action: string, payload: Record<string, unk
       return updateNecessity(spreadsheet, user, payload);
     case "updateStore":
       return updateStore(spreadsheet, user, payload);
+    case "createItem":
+      return createItem(spreadsheet, user, payload);
     case "updateItem":
       return updateItem(spreadsheet, user, payload);
     default:
@@ -323,6 +327,8 @@ function buildPublicBootstrap(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsh
       name: cell(itemsTable, row, "Item"),
       definitionStatus: normalizeText(cell(itemsTable, row, "Status_Especificação")).indexOf("pendente") >= 0 ? "PENDENTE_DEFINICAO" : "LIBERADO_PARA_COTACAO",
       duplicateOperationalCode: isYes(cell(itemsTable, row, "Código_Duplicado")),
+      active: !cell(itemsTable, row, "Ativo") || isYes(cell(itemsTable, row, "Ativo")),
+      productLink: cell(itemsTable, row, ITEM_PRODUCT_LINK_HEADER_V1),
     })),
     necessities,
     activeQuoteNecessityIds,
@@ -367,6 +373,7 @@ function buildLegacyPublicQuotesWorkspace(spreadsheet: GoogleAppsScript.Spreadsh
       };
     }),
     schemaMode: "LEGACY",
+    paymentTermsSupported: false,
     checkedAt: new Date().toISOString(),
   };
 }
@@ -383,8 +390,7 @@ function buildBootstrap(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet, u
   const necessities = necessitiesTable.rows
     .map((row) => mapNecessity(necessitiesTable, row))
     .filter((need) => Boolean(allowedStoreIds[need.storeId]));
-  const referencedItems = Object.fromEntries(necessities.map((need) => [need.itemId, true]));
-  const items = itemsTable.rows.map((row) => mapItem(itemsTable, row)).filter((item) => Boolean(referencedItems[item.id]));
+  const items = itemsTable.rows.map((row) => mapItem(itemsTable, row));
   const activeQuoteNecessityIds = Object.keys(Object.fromEntries(quotesTable.rows
     .filter((row) => isStoreAllowed(user, cell(quotesTable, row, "ID_Loja")) && isActiveQuoteRow(quotesTable, row))
     .map((row) => [cell(quotesTable, row, "ID_Necessidade"), true]))).filter(Boolean);
@@ -404,6 +410,10 @@ function buildBootstrap(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet, u
     items,
     necessities,
     activeQuoteNecessityIds,
+    capabilities: {
+      createItem: true,
+      itemProductLink: hasColumnV1(itemsTable, ITEM_PRODUCT_LINK_HEADER_V1),
+    },
   };
 }
 
@@ -437,6 +447,7 @@ function buildLegacyQuotesWorkspace(spreadsheet: GoogleAppsScript.Spreadsheet.Sp
       createSupplier: false,
     },
     schemaMode: "LEGACY",
+    paymentTermsSupported: false,
     checkedAt: new Date().toISOString(),
   };
 }
@@ -497,6 +508,7 @@ function buildGroupedQuotesWorkspace(spreadsheet: GoogleAppsScript.Spreadsheet.S
       createSupplier: hasModulePermission(permissionTable, user, "Fornecedores", "Criar"),
     },
     schemaMode: "GROUPED",
+    paymentTermsSupported: hasColumnV1(proposalsTable, QUOTE_INSTALLMENTS_HEADER_V1) && hasColumnV1(proposalsTable, QUOTE_DOWN_PAYMENT_HEADER_V1),
     checkedAt: new Date().toISOString(),
   };
 }
@@ -540,6 +552,7 @@ function buildGroupedPublicQuotesWorkspace(spreadsheet: GoogleAppsScript.Spreads
       };
     }),
     schemaMode: "GROUPED",
+    paymentTermsSupported: false,
     checkedAt: new Date().toISOString(),
   };
 }
@@ -574,6 +587,8 @@ function mapLegacyQuoteProposal(table: SheetTable, row: unknown[]): unknown {
     otherCosts: legacy.otherCosts,
     total: legacy.total,
     paymentMethod: legacy.paymentMethod,
+    installments: 1,
+    hasDownPayment: false,
     leadTimeDays: legacy.leadTimeDays,
     proposalValidUntil: legacy.proposalValidUntil,
     link: legacy.link,
@@ -607,6 +622,8 @@ function mapGroupedQuoteProposalV1(proposals: SheetTable, row: unknown[], lines:
     otherCosts: Number(cell(proposals, row, "Outros_Custos_Total") || 0),
     total: Number(cell(proposals, row, "Valor_Total_Proposta") || 0),
     paymentMethod: cell(proposals, row, "Forma_Pagamento"),
+    installments: Number(cell(proposals, row, QUOTE_INSTALLMENTS_HEADER_V1) || 1),
+    hasDownPayment: isYes(cell(proposals, row, QUOTE_DOWN_PAYMENT_HEADER_V1)),
     leadTimeDays: Number(cell(proposals, row, "Prazo_Dias") || 0),
     proposalValidUntil: dateCell(proposals, row, "Validade_Proposta"),
     link: cell(proposals, row, "Link"),
@@ -690,6 +707,7 @@ function createQuoteProposal(
   return withScriptLock(() => {
     assertGroupedQuoteSchemaV1(spreadsheet);
     const proposals = readTable(spreadsheet, APP_CONFIG.sheets.quoteProposals, QUOTE_PROPOSAL_HEADERS_V1);
+    assertQuotePaymentTermsSchemaV1(proposals, payload);
     const lines = readTable(spreadsheet, APP_CONFIG.sheets.quotes, QUOTE_LINK_HEADERS_V1);
     const necessities = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "ID_Loja", "ID_Item", "Qtd_Planejada", "Status", "version", "updated_at", "updated_by"]);
     const suppliers = readTable(spreadsheet, APP_CONFIG.sheets.suppliers, ["ID_Fornecedor", "Nota_Fornecedor", "Ativo"]);
@@ -754,8 +772,9 @@ function updateQuoteProposal(
     assertGroupedQuoteSchemaV1(spreadsheet);
     const id = requireString(payload.id, "id");
     const expectedVersion = requirePositiveInteger(payload.version, "version");
-    const changes = requireChanges(payload.changes, ["necessityIds", "supplierId", "origin", "unitPrice", "freight", "otherCosts", "paymentMethod", "leadTimeDays", "proposalValidUntil", "link", "status", "quoteDate", "notes"]);
+    const changes = requireChanges(payload.changes, ["necessityIds", "supplierId", "origin", "unitPrice", "freight", "otherCosts", "paymentMethod", "installments", "hasDownPayment", "leadTimeDays", "proposalValidUntil", "link", "status", "quoteDate", "notes"]);
     const proposals = readTable(spreadsheet, APP_CONFIG.sheets.quoteProposals, QUOTE_PROPOSAL_HEADERS_V1);
+    assertQuotePaymentTermsSchemaV1(proposals, changes);
     const found = findVersionedRow(proposals, "ID_Proposta", id, expectedVersion, "Proposta");
     if (!isActiveQuoteRow(proposals, found.current)) throw new ApiException("LOCKED_RECORD", "A proposta está inativa.");
     const currentStatus = normalizeQuoteStatus(cell(proposals, found.current, "Status"));
@@ -787,6 +806,8 @@ function updateQuoteProposal(
     applyChange(proposals, found.current, "Outros_Custos_Total", values.otherCosts, (value) => value, headerChanges);
     applyChange(proposals, found.current, "Valor_Total_Proposta", values.total, (value) => value, headerChanges);
     applyChange(proposals, found.current, "Forma_Pagamento", values.paymentMethod, (value) => value, headerChanges);
+    if (hasColumnV1(proposals, QUOTE_INSTALLMENTS_HEADER_V1)) applyChange(proposals, found.current, QUOTE_INSTALLMENTS_HEADER_V1, values.installments, (value) => value, headerChanges);
+    if (hasColumnV1(proposals, QUOTE_DOWN_PAYMENT_HEADER_V1)) applyChange(proposals, found.current, QUOTE_DOWN_PAYMENT_HEADER_V1, values.hasDownPayment, validateYesNo, headerChanges);
     applyChange(proposals, found.current, "Prazo_Dias", values.leadTimeDays, (value) => value, headerChanges);
     applyChange(proposals, found.current, "Validade_Proposta", values.proposalValidUntil, (value) => value, headerChanges);
     applyChange(proposals, found.current, "Link", values.link, (value) => value, headerChanges);
@@ -1094,6 +1115,8 @@ function writeGroupedProposalRowV1(
   setCell(table, row, "Outros_Custos_Total", values.otherCosts);
   setCell(table, row, "Valor_Total_Proposta", values.total);
   setCell(table, row, "Forma_Pagamento", values.paymentMethod);
+  setCell(table, row, QUOTE_INSTALLMENTS_HEADER_V1, values.installments);
+  setCell(table, row, QUOTE_DOWN_PAYMENT_HEADER_V1, values.hasDownPayment ? "Sim" : "Não");
   setCell(table, row, "Prazo_Dias", values.leadTimeDays);
   setCell(table, row, "Validade_Proposta", values.proposalValidUntil);
   setCell(table, row, "Link", values.link);
@@ -1585,10 +1608,61 @@ function updateStore(
     applyChange(table, current, "Responsável", changes.manager, validateShortText, auditedChanges);
     applyChange(table, current, "E-mail", changes.email, validateOptionalEmail, auditedChanges);
     applyChange(table, current, "Telefone", changes.phone, validateShortText, auditedChanges);
-    applyChange(table, current, "Status", changes.status, validateRequiredText, auditedChanges);
+    applyChange(table, current, "Status", changes.status, validateStoreStatusV1, auditedChanges);
     applyChange(table, current, "Observações", changes.notes, validateText, auditedChanges);
     persistUpdatedRow(spreadsheet, table, rowIndex, current, currentVersion, user, "LOJAS", id, auditedChanges, String(payload.reason || ""));
     return { store: mapStore(table, current) };
+  });
+}
+
+function createItem(
+  spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet,
+  user: SystemUser,
+  payload: Record<string, unknown>,
+): unknown {
+  assertModulePermission(spreadsheet, user, "Itens", "Criar");
+  return withScriptLock(() => {
+    const table = readTable(spreadsheet, APP_CONFIG.sheets.items, [
+      "ID_Item", "Código_Original", "Grupo", "Área", "Item", "Status_Especificação",
+      "created_at", "created_by", "updated_at", "updated_by", "version",
+    ]);
+    const id = nextInternalId(table, "ID_Item", "ITM", 5);
+    assertInternalIdAvailable(table, "ID_Item", id);
+    const operationalCode = validateRequiredText(payload.operationalCode);
+    const productLink = validateOptionalUrl(payload.productLink);
+    assertOptionalBusinessColumnV1(table, ITEM_PRODUCT_LINK_HEADER_V1, productLink);
+    const duplicateOperationalCode = table.rows.some((row) => normalizeText(cell(table, row, "Código_Original")) === normalizeText(operationalCode));
+    const now = new Date();
+    const row = Array(table.headers.length).fill("");
+    setCell(table, row, "ID_Item", id);
+    setCell(table, row, "Código_Original", operationalCode);
+    setCell(table, row, "Grupo", validateRequiredText(payload.group));
+    setCell(table, row, "Área", validateRequiredText(payload.area));
+    setCell(table, row, "Item", validateRequiredText(payload.name));
+    setCell(table, row, "Especificação", validateText(payload.specification));
+    setCell(table, row, "Qtd_Padrão_Loja", validatePositiveNumber(payload.defaultQuantity));
+    setCell(table, row, "Status_Especificação", validateDefinitionStatus(payload.definitionStatus));
+    setCell(table, row, "Código_Duplicado", duplicateOperationalCode ? "Sim" : "Não");
+    setCell(table, row, "Ativo", validateYesNo(payload.active));
+    setCell(table, row, "Rota_1", validateShortText(payload.route1));
+    setCell(table, row, "Rota_2", validateShortText(payload.route2));
+    setCell(table, row, "Rota_3", validateShortText(payload.route3));
+    setCell(table, row, ITEM_PRODUCT_LINK_HEADER_V1, productLink);
+    setCell(table, row, "Observações", validateText(payload.notes));
+    setTechnicalCreationFields(table, row, user, now);
+    appendCreatedRow(spreadsheet, table, "ID_Item", row, user, {
+      module: "ITENS",
+      recordId: id,
+      changes: [
+        { field: "Código_Original", previous: "", next: operationalCode },
+        { field: "Item", previous: "", next: cell(table, row, "Item") },
+        { field: "Status_Especificação", previous: "", next: cell(table, row, "Status_Especificação") },
+        ...(productLink ? [{ field: ITEM_PRODUCT_LINK_HEADER_V1, previous: "", next: productLink }] : []),
+      ],
+      reason: "Item cadastrado pelo catálogo mestre.",
+      action: "CRIACAO",
+    });
+    return { item: mapItem(table, row) };
   });
 }
 
@@ -1599,7 +1673,7 @@ function updateItem(
 ): unknown {
   const id = requireString(payload.id, "id");
   const expectedVersion = requirePositiveInteger(payload.version, "version");
-  const changes = requireChanges(payload.changes, ["operationalCode", "group", "area", "name", "specification", "defaultQuantity", "definitionStatus", "active", "route1", "route2", "route3", "notes"]);
+  const changes = requireChanges(payload.changes, ["operationalCode", "group", "area", "name", "specification", "defaultQuantity", "definitionStatus", "active", "route1", "route2", "route3", "productLink", "notes"]);
   assertModulePermission(spreadsheet, user, "Itens", "Editar");
 
   return withScriptLock(() => {
@@ -1618,6 +1692,11 @@ function updateItem(
     applyChange(table, current, "Rota_1", changes.route1, validateShortText, auditedChanges);
     applyChange(table, current, "Rota_2", changes.route2, validateShortText, auditedChanges);
     applyChange(table, current, "Rota_3", changes.route3, validateShortText, auditedChanges);
+    if (changes.productLink !== undefined) {
+      const productLink = validateOptionalUrl(changes.productLink);
+      assertOptionalBusinessColumnV1(table, ITEM_PRODUCT_LINK_HEADER_V1, productLink);
+      if (hasColumnV1(table, ITEM_PRODUCT_LINK_HEADER_V1)) applyChange(table, current, ITEM_PRODUCT_LINK_HEADER_V1, productLink, (value) => value, auditedChanges);
+    }
     applyChange(table, current, "Observações", changes.notes, validateText, auditedChanges);
     if (!auditedChanges.length) throw new ApiException("VALIDATION_ERROR", "Nenhuma alteração válida foi informada.");
 
@@ -1975,7 +2054,7 @@ function mapStore(table: SheetTable, row: unknown[]) {
 }
 
 function mapItem(table: SheetTable, row: unknown[]) {
-  return { id: cell(table, row, "ID_Item"), operationalCode: cell(table, row, "Código_Original"), group: cell(table, row, "Grupo"), area: cell(table, row, "Área"), name: cell(table, row, "Item"), specification: cell(table, row, "Especificação"), defaultQuantity: Number(cell(table, row, "Qtd_Padrão_Loja") || 1), definitionStatus: normalizeText(cell(table, row, "Status_Especificação")).indexOf("pendente") >= 0 ? "PENDENTE_DEFINICAO" : "LIBERADO_PARA_COTACAO", duplicateOperationalCode: isYes(cell(table, row, "Código_Duplicado")), active: !cell(table, row, "Ativo") || isYes(cell(table, row, "Ativo")), route1: cell(table, row, "Rota_1"), route2: cell(table, row, "Rota_2"), route3: cell(table, row, "Rota_3"), notes: cell(table, row, "Observações"), version: Number(cell(table, row, "version") || 1) };
+  return { id: cell(table, row, "ID_Item"), operationalCode: cell(table, row, "Código_Original"), group: cell(table, row, "Grupo"), area: cell(table, row, "Área"), name: cell(table, row, "Item"), specification: cell(table, row, "Especificação"), defaultQuantity: Number(cell(table, row, "Qtd_Padrão_Loja") || 1), definitionStatus: normalizeText(cell(table, row, "Status_Especificação")).indexOf("pendente") >= 0 ? "PENDENTE_DEFINICAO" : "LIBERADO_PARA_COTACAO", duplicateOperationalCode: isYes(cell(table, row, "Código_Duplicado")), active: !cell(table, row, "Ativo") || isYes(cell(table, row, "Ativo")), route1: cell(table, row, "Rota_1"), route2: cell(table, row, "Rota_2"), route3: cell(table, row, "Rota_3"), productLink: cell(table, row, ITEM_PRODUCT_LINK_HEADER_V1), notes: cell(table, row, "Observações"), version: Number(cell(table, row, "version") || 1) };
 }
 
 function mapNecessity(table: SheetTable, row: unknown[]) {
@@ -2017,6 +2096,8 @@ function mapQuote(table: SheetTable, row: unknown[]) {
     otherCosts: Number(cell(table, row, "Outros_Custos") || 0),
     total: Number(cell(table, row, "Valor_Total") || 0),
     paymentMethod: cell(table, row, "Forma_Pagamento"),
+    installments: 1,
+    hasDownPayment: false,
     leadTimeDays: Number(cell(table, row, "Prazo_Dias") || 0),
     proposalValidUntil: dateCell(table, row, "Validade_Proposta"),
     link: cell(table, row, "Link"),
@@ -2077,6 +2158,7 @@ function toSafeError(error: unknown): { code: string; message: string; details?:
 
 function normalizeHeader(value: unknown): string { return normalizeText(String(value || "")).replace(/[^a-z0-9]/g, ""); }
 function normalizeText(value: string): string { return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase(); }
+function hasColumnV1(table: SheetTable, header: string): boolean { return table.normalizedHeaders.indexOf(normalizeHeader(header)) >= 0; }
 function columnIndex(table: SheetTable, header: string): number { const index = table.normalizedHeaders.indexOf(normalizeHeader(header)); if (index < 0) throw new ApiException("STRUCTURE_REQUIRED", `Campo técnico ausente: ${header}`); return index; }
 function cell(table: SheetTable, row: unknown[], header: string): string { const index = table.normalizedHeaders.indexOf(normalizeHeader(header)); return index < 0 ? "" : String(row[index] || "").trim(); }
 function dateCell(table: SheetTable, row: unknown[], header: string): string { const index = table.normalizedHeaders.indexOf(normalizeHeader(header)); if (index < 0 || !row[index]) return ""; const value = row[index]; return value instanceof Date ? formatDateOnly(value) : String(value).trim().slice(0, 10); }
@@ -2095,7 +2177,20 @@ function validateUf(value: unknown): string { const result = validateShortText(v
 function validateOptionalEmail(value: unknown): string { const result = validateShortText(value).toLocaleLowerCase(); if (result && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result)) throw new ApiException("VALIDATION_ERROR", "E-mail inválido."); return result; }
 function validateDefinitionStatus(value: unknown): string { const status = requireString(value, "definitionStatus"); if (status === "PENDENTE_DEFINICAO") return "Pendente definição"; if (status === "LIBERADO_PARA_COTACAO") return "Liberado para cotação"; throw new ApiException("VALIDATION_ERROR", "Status de especificação inválido."); }
 function normalizeDefinitionStatusV1(value: unknown): "PENDENTE_DEFINICAO" | "LIBERADO_PARA_COTACAO" { const key = normalizeHeader(value); if (key === "pendentedefinicao") return "PENDENTE_DEFINICAO"; if (key === "liberadoparacotacao") return "LIBERADO_PARA_COTACAO"; throw new ApiException("STRUCTURE_ERROR", "Status de especificação do item inválido."); }
+function validateStoreStatusV1(value: unknown): string { const status = requireString(value, "status"); const labels: Record<string, string> = { ativa: "Ativa", acadastrar: "A cadastrar", inativa: "Inativa" }; const normalized = labels[normalizeHeader(status)]; if (!normalized) throw new ApiException("VALIDATION_ERROR", "Status da loja deve ser Ativa, A cadastrar ou Inativa."); return normalized; }
 function validateYesNo(value: unknown): string { if (typeof value !== "boolean") throw new ApiException("VALIDATION_ERROR", "Ativo deve ser verdadeiro ou falso."); return value ? "Sim" : "Não"; }
+function validateBooleanV1(value: unknown, field: string): boolean { if (typeof value !== "boolean") throw new ApiException("VALIDATION_ERROR", `${field} deve ser Sim ou Não.`); return value; }
+function validateInstallmentsV1(value: unknown): number { const parsed = Number(value); if (!Number.isInteger(parsed) || parsed < 1 || parsed > 120) throw new ApiException("VALIDATION_ERROR", "Quantidade de parcelas deve ser um inteiro entre 1 e 120."); return parsed; }
+function assertOptionalBusinessColumnV1(table: SheetTable, header: string, value: unknown): void {
+  if (value !== "" && value !== undefined && value !== null && !hasColumnV1(table, header)) {
+    throw new ApiException("STRUCTURE_REQUIRED", `Inclua manualmente a coluna ${header} na aba antes de gravar este campo.`);
+  }
+}
+function assertQuotePaymentTermsSchemaV1(table: SheetTable, payload: Record<string, unknown>): void {
+  if (payload.installments === undefined && payload.hasDownPayment === undefined) return;
+  const missing = [QUOTE_INSTALLMENTS_HEADER_V1, QUOTE_DOWN_PAYMENT_HEADER_V1].filter((header) => !hasColumnV1(table, header));
+  if (missing.length) throw new ApiException("STRUCTURE_REQUIRED", `Inclua manualmente em 16_PROPOSTAS_COTACAO as colunas: ${missing.join(", ")}.`);
+}
 function validatePriority(value: unknown): string { const result = requireString(value, "priority").toLocaleUpperCase(); if (["BAIXA", "MEDIA", "ALTA", "CRITICA"].indexOf(normalizeText(result).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleUpperCase()) < 0) throw new ApiException("VALIDATION_ERROR", "Prioridade inválida."); return result; }
 function validateText(value: unknown): string { if (typeof value !== "string" || value.length > 2000) throw new ApiException("VALIDATION_ERROR", "Texto inválido ou muito longo."); return value.trim(); }
 function validateStatus(value: unknown): string { const status = requireString(value, "status").toLocaleUpperCase(); if (!(status in STATUS_TRANSITIONS)) throw new ApiException("VALIDATION_ERROR", "Status inválido."); return status; }
@@ -2171,6 +2266,8 @@ function validateQuoteValues(payload: Record<string, unknown>, options?: QuoteOp
     otherCosts,
     total: Math.round((quantity * unitPrice + freight + otherCosts + Number.EPSILON) * 100) / 100,
     paymentMethod: options ? validateListedValue(payload.paymentMethod, options.paymentMethods, "Forma de pagamento") : validateRequiredText(payload.paymentMethod),
+    installments: validateInstallmentsV1(payload.installments === undefined ? 1 : payload.installments),
+    hasDownPayment: validateBooleanV1(payload.hasDownPayment === undefined ? false : payload.hasDownPayment, "Possui entrada"),
     leadTimeDays: validateNonNegativeInteger(payload.leadTimeDays, "Prazo em dias"),
     proposalValidUntil,
     link: validateOptionalUrl(payload.link),
@@ -2313,6 +2410,9 @@ function inspectTechnicalTable(
 }
 
 const QUOTE_PROPOSAL_MIGRATION_PROPERTY_V1 = "ALLOW_MIGRATE_QUOTE_PROPOSALS_V1";
+const ITEM_PRODUCT_LINK_HEADER_V1 = "Link_Produto";
+const QUOTE_INSTALLMENTS_HEADER_V1 = "Quantidade_Parcelas";
+const QUOTE_DOWN_PAYMENT_HEADER_V1 = "Possui_Entrada";
 const QUOTE_PROPOSAL_HEADERS_V1 = [
   "ID_Proposta", "ID_Fornecedor", "Origem_Cotação", "Quantidade_Total", "Subtotal_Itens", "Frete_Total",
   "Outros_Custos_Total", "Valor_Total_Proposta", "Forma_Pagamento", "Prazo_Dias", "Validade_Proposta", "Link",

@@ -35,7 +35,7 @@ const store: Store = {
 };
 
 const item: Item = {
-  id: "ITM-00001", operationalCode: "MOB-001", group: "Mobiliário", area: "Loja", name: "Item", specification: "", defaultQuantity: 1, definitionStatus: "LIBERADO_PARA_COTACAO", duplicateOperationalCode: false, active: true, route1: "", route2: "", route3: "", notes: "", version: 1,
+  id: "ITM-00001", operationalCode: "MOB-001", group: "Mobiliário", area: "Loja", name: "Item", specification: "", defaultQuantity: 1, definitionStatus: "LIBERADO_PARA_COTACAO", duplicateOperationalCode: false, active: true, route1: "", route2: "", route3: "", productLink: "", notes: "", version: 1,
 };
 
 function necessity(id: string, status: NecessityStatus): Necessity {

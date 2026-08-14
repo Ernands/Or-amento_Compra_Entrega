@@ -42,6 +42,7 @@ export interface Item {
   route1: string;
   route2: string;
   route3: string;
+  productLink: string;
   notes: string;
   version: number;
 }
@@ -77,22 +78,27 @@ export interface UpdateStoreInput {
 export interface UpdateItemInput {
   id: string;
   version: number;
-  changes: {
-    operationalCode: string;
-    group: string;
-    area: string;
-    name: string;
-    specification: string;
-    defaultQuantity: number;
-    definitionStatus: Item["definitionStatus"];
-    active: boolean;
-    route1: string;
-    route2: string;
-    route3: string;
-    notes: string;
-  };
+  changes: ItemValuesInput;
   reason?: string;
 }
+
+export interface ItemValuesInput {
+  operationalCode: string;
+  group: string;
+  area: string;
+  name: string;
+  specification: string;
+  defaultQuantity: number;
+  definitionStatus: Item["definitionStatus"];
+  active: boolean;
+  route1: string;
+  route2: string;
+  route3: string;
+  productLink: string;
+  notes: string;
+}
+
+export type CreateItemInput = ItemValuesInput;
 
 export interface DashboardMetrics {
   stores: number;
@@ -180,6 +186,8 @@ export interface Quote {
   otherCosts: number;
   total: number;
   paymentMethod: string;
+  installments: number;
+  hasDownPayment: boolean;
   leadTimeDays: number;
   proposalValidUntil: string;
   link: string;
@@ -237,6 +245,7 @@ export interface QuotesWorkspace {
   options: QuoteOptions;
   permissions: QuotePermissions;
   schemaMode: "LEGACY" | "GROUPED";
+  paymentTermsSupported: boolean;
   checkedAt: string;
 }
 
@@ -261,6 +270,8 @@ export interface QuoteValuesInput {
   freight: number;
   otherCosts: number;
   paymentMethod: string;
+  installments: number;
+  hasDownPayment: boolean;
   leadTimeDays: number;
   proposalValidUntil: string;
   link: string;

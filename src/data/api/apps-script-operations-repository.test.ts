@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AppsScriptClient } from "./apps-script-client";
 import { AppsScriptOperationsRepository } from "./apps-script-operations-repository";
 import { QuotesPageCrashFallback } from "@/components/app/quotes-page-error-boundary";
-import type { CreateQuoteInput, Item, Store, UpdateQuoteInput } from "@/domain/entities";
+import type { CreateItemInput, CreateQuoteInput, Item, Store, UpdateItemInput, UpdateQuoteInput } from "@/domain/entities";
 import { LegacyQuotesReadOnlyNotice, ProposalTable } from "@/pages/quotes-page";
 
 const values = {
@@ -15,6 +15,8 @@ const values = {
   freight: 20,
   otherCosts: 5,
   paymentMethod: "PIX",
+  installments: 3,
+  hasDownPayment: true,
   leadTimeDays: 10,
   proposalValidUntil: "2026-08-31",
   link: "https://example.com/proposta",
@@ -24,28 +26,81 @@ const values = {
 };
 
 describe("AppsScriptOperationsRepository — propostas agrupadas", () => {
+  it("usa a ação autenticada createItem com o contrato completo", async () => {
+    const call = vi.fn().mockResolvedValue({ item: {} });
+    const repository = new AppsScriptOperationsRepository({ call } as unknown as AppsScriptClient);
+    const input: CreateItemInput = {
+      operationalCode: "MOB-999", group: "Mobiliário", area: "Transacional", name: "Item novo",
+      specification: "Especificação", defaultQuantity: 1, definitionStatus: "PENDENTE_DEFINICAO", active: true,
+      route1: "", route2: "", route3: "", productLink: "https://example.com/produto", notes: "",
+    };
+
+    await repository.createItem(input);
+
+    expect(call).toHaveBeenCalledWith("createItem", input);
+  });
+
+  it("não envia productLink para um backend anterior", async () => {
+    const call = vi.fn().mockImplementation(async (action: string) => action === "bootstrap" ? {} : { item: {} });
+    const repository = new AppsScriptOperationsRepository({ call } as unknown as AppsScriptClient);
+    const input: UpdateItemInput = {
+      id: "ITM-00001", version: 1, reason: "Teste",
+      changes: {
+        operationalCode: "MOB-001", group: "Mobiliário", area: "Transacional", name: "Item",
+        specification: "", defaultQuantity: 1, definitionStatus: "LIBERADO_PARA_COTACAO", active: true,
+        route1: "", route2: "", route3: "", productLink: "https://example.com/produto", notes: "",
+      },
+    };
+
+    await repository.updateItem(input);
+
+    expect(call.mock.calls.map(([action]) => action)).toEqual(["bootstrap", "updateItem"]);
+    expect(call.mock.calls[1][1].changes).not.toHaveProperty("productLink");
+  });
+
   it("usa ações novas e nunca envia quantidade calculada pelo cliente", async () => {
-    const call = vi.fn().mockResolvedValue({ quote: {} });
+    const call = vi.fn().mockImplementation(async (action: string) => action === "quotesWorkspace"
+      ? { schemaMode: "GROUPED", paymentTermsSupported: true, quotes: [] }
+      : { quote: {} });
     const repository = new AppsScriptOperationsRepository({ call } as unknown as AppsScriptClient);
     const input: CreateQuoteInput = { necessityIds: ["NEC-000001", "NEC-000002"], ...values };
 
+    await repository.getQuotesWorkspace();
     await repository.createQuote(input);
 
     expect(call).toHaveBeenCalledWith("createQuoteProposal", input);
-    expect(call.mock.calls[0][1]).not.toHaveProperty("quantity");
+    expect(call.mock.calls[1][1]).not.toHaveProperty("quantity");
+  });
+
+  it("remove parcelas e entrada ao conversar com um backend anterior", async () => {
+    const call = vi.fn().mockImplementation(async (action: string) => action === "quotesWorkspace"
+      ? { schemaMode: "GROUPED", quotes: [] }
+      : { quote: {} });
+    const repository = new AppsScriptOperationsRepository({ call } as unknown as AppsScriptClient);
+
+    await repository.getQuotesWorkspace();
+    await repository.createQuote({ necessityIds: ["NEC-000001"], ...values });
+
+    const payload = call.mock.calls[1][1];
+    expect(payload).not.toHaveProperty("installments");
+    expect(payload).not.toHaveProperty("hasDownPayment");
   });
 
   it("separa edição, reabertura, seleção e exclusão por proposta", async () => {
-    const call = vi.fn().mockResolvedValue({ quote: {} });
+    const call = vi.fn().mockImplementation(async (action: string) => action === "quotesWorkspace"
+      ? { schemaMode: "GROUPED", paymentTermsSupported: true, quotes: [] }
+      : { quote: {} });
     const repository = new AppsScriptOperationsRepository({ call } as unknown as AppsScriptClient);
     const update: UpdateQuoteInput = { id: "PRP-000001", version: 2, changes: { necessityIds: ["NEC-000001"], ...values }, reason: "Ajuste" };
 
+    await repository.getQuotesWorkspace();
     await repository.updateQuote(update);
     await repository.reopenQuote({ id: "PRP-000001", version: 3, reason: "Negociação revisada" });
     await repository.selectQuote({ id: "PRP-000001", version: 4, reason: "Melhor proposta" });
     await repository.deleteQuote({ id: "PRP-000002", version: 1, reason: "Descartada" });
 
     expect(call.mock.calls.map(([action]) => action)).toEqual([
+      "quotesWorkspace",
       "updateQuoteProposal",
       "reopenQuoteProposal",
       "selectQuoteProposal",

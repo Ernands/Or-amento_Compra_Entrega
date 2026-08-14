@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useState } from "rea
 import { useAuth } from "@/auth/auth-context";
 import type { ViewBootstrapPayload } from "@/data/api/apps-script-operations-repository";
 import { createOperationsRepository } from "@/data/repositories/create-operations-repository";
-import type { DataSourceInfo, Item, Necessity, Store, TechnicalStatus, UpdateItemInput, UpdateStoreInput } from "@/domain/entities";
+import type { CreateItemInput, DataSourceInfo, Item, Necessity, Store, TechnicalStatus, UpdateItemInput, UpdateStoreInput } from "@/domain/entities";
 import { OperationsService, buildDashboard } from "@/services/operations-service";
 
 type Dashboard = ReturnType<typeof buildDashboard>;
@@ -16,9 +16,11 @@ interface OperationsState {
   items: Item[];
   necessities: Necessity[];
   dashboard: Dashboard | null;
+  capabilities: { createItem: boolean; itemProductLink: boolean };
   refresh: () => void;
   getTechnicalStatus: () => Promise<TechnicalStatus>;
   updateStore: (input: UpdateStoreInput) => Promise<void>;
+  createItem: (input: CreateItemInput) => Promise<void>;
   updateItem: (input: UpdateItemInput) => Promise<void>;
 }
 
@@ -27,8 +29,8 @@ const OperationsContext = createContext<OperationsState | null>(null);
 export function OperationsProvider({ children }: { children: React.ReactNode }) {
   const { accessMode, bootstrap, bootstrapError, bootstrapLoading, credential, developmentMode, refreshBootstrap } = useAuth();
   const [refreshKey, setRefreshKey] = useState(0);
-  const [state, setState] = useState<Omit<OperationsState, "refresh" | "getTechnicalStatus" | "updateStore" | "updateItem">>({
-    loading: Boolean(credential), error: "", source: null, stores: [], items: [], necessities: [], dashboard: null,
+  const [state, setState] = useState<Omit<OperationsState, "refresh" | "getTechnicalStatus" | "updateStore" | "createItem" | "updateItem">>({
+    loading: Boolean(credential), error: "", source: null, stores: [], items: [], necessities: [], dashboard: null, capabilities: { createItem: false, itemProductLink: false },
   });
 
   useEffect(() => {
@@ -39,7 +41,7 @@ export function OperationsProvider({ children }: { children: React.ReactNode }) 
     service.listAll()
       .then((result) => {
         if (!active) return;
-        setState({ loading: false, error: "", ...result });
+        setState({ loading: false, error: "", ...result, capabilities: { createItem: false, itemProductLink: false } });
       })
       .catch((error: unknown) => {
         if (!active) return;
@@ -63,6 +65,12 @@ export function OperationsProvider({ children }: { children: React.ReactNode }) 
     await createOperationsRepository(credential).updateStore(input);
     await refreshBootstrap();
   }, [accessMode, credential, refreshBootstrap]);
+  const createItem = useCallback(async (input: CreateItemInput) => {
+    if (accessMode === "visitor") throw new Error("Entre com Google para realizar alterações.");
+    if (!credential) throw new Error("Sessão não encontrada.");
+    await createOperationsRepository(credential).createItem(input);
+    await refreshBootstrap();
+  }, [accessMode, credential, refreshBootstrap]);
   const updateItem = useCallback(async (input: UpdateItemInput) => {
     if (accessMode === "visitor") throw new Error("Entre com Google para realizar alterações.");
     if (!credential) throw new Error("Sessão não encontrada.");
@@ -72,7 +80,7 @@ export function OperationsProvider({ children }: { children: React.ReactNode }) 
   const resolvedState = bootstrap
     ? { ...stateFromBootstrap(bootstrap), loading: bootstrapLoading, error: bootstrapError }
     : state;
-  return <OperationsContext.Provider value={{ ...resolvedState, refresh, getTechnicalStatus, updateStore, updateItem }}>{children}</OperationsContext.Provider>;
+  return <OperationsContext.Provider value={{ ...resolvedState, refresh, getTechnicalStatus, updateStore, createItem, updateItem }}>{children}</OperationsContext.Provider>;
 }
 
 export function useOperations() {
@@ -81,7 +89,7 @@ export function useOperations() {
   return context;
 }
 
-function stateFromBootstrap(bootstrap: ViewBootstrapPayload): Omit<OperationsState, "refresh" | "getTechnicalStatus" | "updateStore" | "updateItem"> {
+function stateFromBootstrap(bootstrap: ViewBootstrapPayload): Omit<OperationsState, "refresh" | "getTechnicalStatus" | "updateStore" | "createItem" | "updateItem"> {
   const { source, stores, items, necessities, activeQuoteNecessityIds } = bootstrap;
   return {
     loading: false,
@@ -91,5 +99,6 @@ function stateFromBootstrap(bootstrap: ViewBootstrapPayload): Omit<OperationsSta
     items,
     necessities,
     dashboard: buildDashboard(stores, items, necessities, activeQuoteNecessityIds),
+    capabilities: bootstrap.capabilities ?? { createItem: false, itemProductLink: false },
   };
 }

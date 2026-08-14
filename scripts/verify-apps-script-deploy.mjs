@@ -25,16 +25,22 @@ assert.match(deployCode, /function dispatchAuthenticatedAction\(/, "Dispatch aut
 assert.match(deployCode, /getProperty\("PUBLIC_READ_ACCESS"\)/, "PUBLIC_READ_ACCESS não usa PropertiesService.");
 assert.match(deployCode, /verifyGoogleCredential\(requireGoogleCredential\(request\.credential\)\)[\s\S]*?const spreadsheet = openConfiguredSpreadsheet\(\)/, "Ações autenticadas devem exigir credencial antes de abrir a planilha.");
 const publicDispatchCode = deployCode.slice(deployCode.indexOf("function dispatchPublicReadAction"), deployCode.indexOf("function dispatchAuthenticatedAction"));
-for (const action of ["createSupplier", "createQuote", "updateQuote", "deleteQuote", "selectQuote", "createQuoteProposal", "updateQuoteProposal", "reopenQuoteProposal", "deleteQuoteProposal", "selectQuoteProposal", "updateNecessity", "updateStore", "updateItem", "technicalStatus"]) {
+for (const action of ["createSupplier", "createQuote", "updateQuote", "deleteQuote", "selectQuote", "createQuoteProposal", "updateQuoteProposal", "reopenQuoteProposal", "deleteQuoteProposal", "selectQuoteProposal", "updateNecessity", "updateStore", "createItem", "updateItem", "technicalStatus"]) {
   assert.doesNotMatch(publicDispatchCode, new RegExp(action), `${action} não pode pertencer ao dispatch público.`);
 }
 for (const action of ["publicBootstrap", "publicQuotesWorkspace"]) {
   assert.match(publicDispatchCode, new RegExp(`case "${action}":`), `${action} deve pertencer ao dispatch público.`);
 }
 assert.match(deployCode, /function updateStore\(/, "updateStore ausente.");
+assert.match(deployCode, /case "createItem":/, "A ação createItem não está no dispatch autenticado.");
+assert.match(deployCode, /function createItem[\s\S]*?return withScriptLock\(/, "createItem deve usar LockService.");
+assert.match(deployCode, /function createItem[\s\S]*?setTechnicalCreationFields[\s\S]*?appendCreatedRow/, "createItem deve preencher metadados e auditoria.");
 assert.match(deployCode, /function updateItem\(/, "updateItem ausente.");
 assert.match(deployCode, /function updateItem[\s\S]*?buildItemDefinitionNecessitySyncPlanV1[\s\S]*?performAtomicWritesV1/, "updateItem deve sincronizar necessidades na mesma gravação atômica.");
 assert.match(deployCode, /function buildItemDefinitionNecessitySyncPlanV1\(/, "Planejamento da sincronização Item → Necessidades ausente.");
+assert.match(deployCode, /function updateStore[\s\S]*?validateStoreStatusV1/, "Status de loja deve ser validado no backend.");
+assert.match(deployCode, /function createQuoteProposal[\s\S]*?assertQuotePaymentTermsSchemaV1/, "Criação de proposta deve exigir colunas de parcelas e entrada.");
+assert.match(deployCode, /function updateQuoteProposal[\s\S]*?QUOTE_INSTALLMENTS_HEADER_V1[\s\S]*?QUOTE_DOWN_PAYMENT_HEADER_V1/, "Edição de proposta deve persistir parcelas e entrada.");
 for (const action of ["quotesWorkspace", "createSupplier", "createQuote", "updateQuote", "deleteQuote", "selectQuote"]) {
   assert.match(deployCode, new RegExp(`case "${action}":`), `A ação ${action} não está no dispatch autenticado.`);
 }
@@ -69,6 +75,7 @@ assert.match(deployCode, /function selectQuote[\s\S]*?isQuoteMarkedSelected/, "s
 assert.match(deployCode, /function createSupplier[\s\S]*?hasDuplicateNormalizedTaxId/, "createSupplier deve bloquear CNPJ/CPF normalizado duplicado.");
 assert.match(deployCode, /function createQuote[\s\S]*?assertNecessityCanBeQuoted/, "createQuote deve validar o status da necessidade.");
 assert.match(deployCode, /function buildBootstrap[\s\S]*?activeQuoteNecessityIds/, "bootstrap deve informar necessidades com cotação ativa.");
+assert.match(deployCode, /function buildBootstrap[\s\S]*?capabilities[\s\S]*?createItem: true[\s\S]*?itemProductLink:/, "bootstrap deve negociar as capacidades do catálogo.");
 assert.match(deployCode, /function buildQuotesWorkspace[\s\S]*?isActiveQuoteRow/, "quotesWorkspace deve ocultar cotações excluídas.");
 const legacyWorkspaceCode = deployCode.slice(deployCode.indexOf("function buildLegacyQuotesWorkspace"), deployCode.indexOf("function quoteSchemaMode"));
 assert.match(legacyWorkspaceCode, /mapLegacyQuoteProposal\(quotesTable, row\)/, "quotesWorkspace LEGACY autenticado deve devolver o contrato de proposta usado pela tela.");
@@ -453,6 +460,17 @@ const quoteOptions = {
   origins: ["Matriz", "Loja"],
   paymentMethods: ["À vista", "30 dias"],
 };
+const paymentTermsTable = sandbox.readTable({ getSheetByName: () => fakeDataSheet(
+  ["ID_Proposta", "Quantidade_Parcelas", "Possui_Entrada"],
+  [],
+) }, "16_PROPOSTAS_COTACAO", ["ID_Proposta"]);
+assert.doesNotThrow(() => sandbox.assertQuotePaymentTermsSchemaV1(paymentTermsTable, { installments: 2, hasDownPayment: false }));
+const missingPaymentTermsTable = sandbox.readTable({ getSheetByName: () => fakeDataSheet(["ID_Proposta"], []) }, "16_PROPOSTAS_COTACAO", ["ID_Proposta"]);
+assert.throws(
+  () => sandbox.assertQuotePaymentTermsSchemaV1(missingPaymentTermsTable, { installments: 2, hasDownPayment: false }),
+  /Quantidade_Parcelas.*Possui_Entrada/,
+  "A escrita deve ser bloqueada até que as novas colunas existam.",
+);
 const validatedQuote = sandbox.validateQuoteValues({
   supplierId: "FOR-000001",
   origin: "Matriz",
@@ -461,6 +479,8 @@ const validatedQuote = sandbox.validateQuoteValues({
   freight: 10,
   otherCosts: 4.25,
   paymentMethod: "30 dias",
+  installments: 3,
+  hasDownPayment: true,
   leadTimeDays: 7,
   proposalValidUntil: "2026-08-31",
   link: "https://example.com/proposta",
@@ -469,6 +489,16 @@ const validatedQuote = sandbox.validateQuoteValues({
   notes: "Teste de contrato",
 }, quoteOptions);
 assert.equal(validatedQuote.total, 265.25, "O backend deve calcular quantidade × preço + frete + outros custos.");
+assert.equal(validatedQuote.installments, 3);
+assert.equal(validatedQuote.hasDownPayment, true);
+assert.throws(
+  () => sandbox.validateQuoteValues({ ...validatedQuote, installments: 0 }, quoteOptions),
+  /parcelas/i,
+  "O backend deve rejeitar quantidade de parcelas inválida.",
+);
+assert.equal(sandbox.validateStoreStatusV1("Ativa"), "Ativa");
+assert.equal(sandbox.validateStoreStatusV1("A cadastrar"), "A cadastrar");
+assert.throws(() => sandbox.validateStoreStatusV1("Status inventado"), /Status da loja/);
 assert.throws(
   () => sandbox.validateQuoteValues({ ...validatedQuote, origin: "Valor inventado" }, quoteOptions),
   /14_LISTAS/,

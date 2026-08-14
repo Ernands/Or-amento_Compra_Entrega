@@ -1,4 +1,4 @@
-import type { CreateQuoteInput, CreateSupplierInput, DataSourceInfo, DeleteQuoteInput, Item, Necessity, Quote, QuotesWorkspace, ReopenQuoteInput, SelectQuoteInput, Store, Supplier, TechnicalStatus, UpdateItemInput, UpdateQuoteInput, UpdateStoreInput } from "@/domain/entities";
+import type { CreateItemInput, CreateQuoteInput, CreateSupplierInput, DataSourceInfo, DeleteQuoteInput, Item, Necessity, Quote, QuotesWorkspace, ReopenQuoteInput, SelectQuoteInput, Store, Supplier, TechnicalStatus, UpdateItemInput, UpdateQuoteInput, UpdateStoreInput } from "@/domain/entities";
 
 export interface OperationsRepository {
   getSourceInfo(): Promise<DataSourceInfo>;
@@ -14,5 +14,6 @@ export interface OperationsRepository {
   deleteQuote(input: DeleteQuoteInput): Promise<{ id: string }>;
   selectQuote(input: SelectQuoteInput): Promise<{ quote: Quote }>;
   updateStore(input: UpdateStoreInput): Promise<{ store: Store }>;
+  createItem(input: CreateItemInput): Promise<{ item: Item }>;
   updateItem(input: UpdateItemInput): Promise<{ item: Item }>;
 }
