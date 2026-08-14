@@ -149,6 +149,12 @@ describe("permissões e escopo da Implantação", () => {
     expect(canAccessImplantation({ authenticated: true, profile: "RESPONSAVEL_LOJA", module: "Implantação Atualizações", action: "create", allowedStoreIds: ["LOJ-006"], storeId: "LOJ-014" })).toBe(false);
   });
 
+  it("mantém Consulta autenticada estritamente sem escrita", () => {
+    expect(canAccessImplantation({ authenticated: true, profile: "CONSULTA", module: "Implantação", action: "view", allowedStoreIds: ["LOJ-001"], storeId: "LOJ-001" })).toBe(true);
+    expect(canAccessImplantation({ authenticated: true, profile: "CONSULTA", module: "Implantação", action: "create", allowedStoreIds: ["LOJ-001"], storeId: "LOJ-001" })).toBe(false);
+    expect(canAccessImplantation({ authenticated: true, profile: "CONSULTA", module: "Implantação Atualizações", action: "create", allowedStoreIds: ["LOJ-001"], storeId: "LOJ-001" })).toBe(false);
+  });
+
   it("restringe Checklist Mestre a Administrador e Gestor", () => {
     expect(canAccessImplantation({ authenticated: true, profile: "ADMINISTRADOR", module: "Checklist Mestre", action: "edit", allowedStoreIds: "TODAS" })).toBe(true);
     expect(canAccessImplantation({ authenticated: true, profile: "GESTOR", module: "Checklist Mestre", action: "edit", allowedStoreIds: "TODAS" })).toBe(true);

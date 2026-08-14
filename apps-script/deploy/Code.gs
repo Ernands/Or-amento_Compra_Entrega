@@ -2734,16 +2734,24 @@ const IMPLANTATION_MODULE_V1 = "Implantação";
 const IMPLANTATION_UPDATES_MODULE_V1 = "Implantação Atualizações";
 const IMPLANTATION_MASTER_MODULE_V1 = "Checklist Mestre";
 function buildImplantationCapabilitiesV1(spreadsheet, user) {
-    const permissions = readTable(spreadsheet, APP_CONFIG.sheets.permissions, ["Perfil", "Módulo", "Visualizar"]);
+    const permissions = readTable(spreadsheet, APP_CONFIG.sheets.permissions, ["Perfil", "Módulo", "Visualizar", "Criar", "Editar", "Excluir", "Reabrir"]);
+    const canEditImplantation = hasModulePermission(permissions, user, IMPLANTATION_MODULE_V1, "Editar");
+    const canCreateUpdates = hasModulePermission(permissions, user, IMPLANTATION_UPDATES_MODULE_V1, "Criar");
     return {
         view: hasModulePermission(permissions, user, IMPLANTATION_MODULE_V1, "Visualizar"),
         viewUpdates: hasModulePermission(permissions, user, IMPLANTATION_UPDATES_MODULE_V1, "Visualizar"),
         viewMaster: hasModulePermission(permissions, user, IMPLANTATION_MASTER_MODULE_V1, "Visualizar"),
-        setOpeningDate: hasModulePermission(permissions, user, IMPLANTATION_MODULE_V1, "Editar"),
+        setOpeningDate: canEditImplantation,
+        previewOpeningDateChange: canEditImplantation,
+        changePlannedOpeningDate: canEditImplantation,
         start: hasModulePermission(permissions, user, IMPLANTATION_MODULE_V1, "Criar"),
-        updateActivity: hasModulePermission(permissions, user, IMPLANTATION_UPDATES_MODULE_V1, "Criar"),
-        cancelActivity: hasModulePermission(permissions, user, IMPLANTATION_MODULE_V1, "Excluir"),
-        reopenActivity: hasModulePermission(permissions, user, IMPLANTATION_MODULE_V1, "Reabrir"),
+        updateActivity: canCreateUpdates,
+        blockActivity: canCreateUpdates,
+        unblockActivity: canCreateUpdates,
+        markNotApplicable: canCreateUpdates,
+        completeActivity: canCreateUpdates,
+        cancelActivity: canCreateUpdates && hasModulePermission(permissions, user, IMPLANTATION_MODULE_V1, "Excluir"),
+        reopenActivity: canCreateUpdates && hasModulePermission(permissions, user, IMPLANTATION_MODULE_V1, "Reabrir"),
         evidenceFilesEnabled: false,
     };
 }
@@ -2970,8 +2978,14 @@ function buildImplantationTimelineV1(spreadsheet, user, payload) {
     const activities = readTable(spreadsheet, APP_CONFIG.sheets.implantationActivities, ["ID_Checklist_Loja", "ID_Loja"]);
     const activity = findRowById(activities, "ID_Checklist_Loja", activityId, "Atividade").row;
     assertStoreScope(user, cell(activities, activity, "ID_Loja"));
-    const pageSize = Math.min(Math.max(Number(payload.pageSize || 20), 1), 50);
-    const cursor = Math.max(Number(payload.cursor || 0), 0);
+    const requestedPageSize = Number(payload.pageSize || 20);
+    if (!Number.isInteger(requestedPageSize) || requestedPageSize < 1)
+        throw new ApiException("VALIDATION_ERROR", "Tamanho da página da timeline inválido.");
+    const pageSize = Math.min(requestedPageSize, 50);
+    const requestedCursor = Number(payload.cursor || 0);
+    if (!Number.isInteger(requestedCursor) || requestedCursor < 0)
+        throw new ApiException("VALIDATION_ERROR", "Cursor da timeline inválido.");
+    const cursor = requestedCursor;
     const table = readImplantationTableStructureV1(spreadsheet, APP_CONFIG.sheets.implantationUpdates, ["ID_Atualizacao", "ID_Checklist_Loja", "Data_Hora", "Request_ID", "ativo"]);
     const dataStart = table.headerRow + 1;
     const rowCount = Math.max(table.sheet.getLastRow() - table.headerRow, 0);
@@ -3039,6 +3053,32 @@ function requireImplantationRequestIdV1(payload) {
         throw new ApiException("VALIDATION_ERROR", "Request_ID excede o limite permitido.");
     return requestId;
 }
+function revalidateImplantationWriteAccessV1(spreadsheet, user, storeId, requirements) {
+    const users = readTable(spreadsheet, APP_CONFIG.sheets.users, ["ID_Usuário", "E-mail", "Perfil", "Lojas_Permitidas", "Ativo"]);
+    const row = users.rows.find((candidate) => cell(users, candidate, "ID_Usuário") === user.id
+        && cell(users, candidate, "E-mail").toLocaleLowerCase() === user.email.toLocaleLowerCase());
+    if (!row || !isYes(cell(users, row, "Ativo"))) {
+        throw new ApiException("ACCESS_DENIED", "Seu usuário não possui mais acesso ativo ao sistema.");
+    }
+    const stores = cell(users, row, "Lojas_Permitidas").trim();
+    const refreshedUser = {
+        ...user,
+        profile: normalizeProfile(cell(users, row, "Perfil")),
+        allowedStoreIds: normalizeText(stores) === "todas" ? "TODAS" : stores.split(",").map((value) => value.trim()).filter(Boolean),
+    };
+    requirements.forEach((requirement) => assertModulePermission(spreadsheet, refreshedUser, requirement.module, requirement.action));
+    assertStoreScope(refreshedUser, storeId);
+}
+function implantationAuditRequestExistsV1(spreadsheet, requestId) {
+    const table = readImplantationTableStructureV1(spreadsheet, APP_CONFIG.sheets.history, ["ID_Histórico", "Referência"]);
+    const rowCount = Math.max(table.sheet.getLastRow() - table.headerRow, 0);
+    if (!rowCount)
+        return false;
+    return table.sheet
+        .getRange(table.headerRow + 1, columnIndex(table, "Referência") + 1, rowCount, 1)
+        .getDisplayValues()
+        .some((row) => String(row[0] || "").trim() === requestId);
+}
 function readImplantationTableStructureV1(spreadsheet, sheetName, requiredHeaders) {
     const sheet = spreadsheet.getSheetByName(sheetName);
     if (!sheet)
@@ -3102,10 +3142,15 @@ function setPlannedOpeningDateV1(spreadsheet, user, payload) {
     const requestId = requireImplantationRequestIdV1(payload);
     assertStoreScope(user, storeId);
     return withScriptLock(() => {
+        revalidateImplantationWriteAccessV1(spreadsheet, user, storeId, [{ module: IMPLANTATION_MODULE_V1, action: "Editar" }]);
+        const stores = readTable(spreadsheet, APP_CONFIG.sheets.stores, ["ID_Loja", "Status", "Data_Inauguracao_Planejada", "version"]);
+        const currentStore = findRowById(stores, "ID_Loja", storeId, "Loja").row;
+        if (implantationAuditRequestExistsV1(spreadsheet, requestId)) {
+            return { store: mapImplantationStoreV1(stores, currentStore), idempotent: true, requestId };
+        }
         const cycles = readTable(spreadsheet, APP_CONFIG.sheets.storeImplantations, ["ID_Implantacao", "ID_Loja", "Status_Ciclo", "ativo"]);
         if (currentImplantationForStoreV1(cycles, storeId))
             throw new ApiException("USE_DATE_CHANGE_FLOW", "Use a reprogramação com prévia para alterar a data de uma implantação iniciada.");
-        const stores = readTable(spreadsheet, APP_CONFIG.sheets.stores, ["ID_Loja", "Status", "Data_Inauguracao_Planejada", "version"]);
         const found = findVersionedRow(stores, "ID_Loja", storeId, expectedVersion, "Loja");
         const previous = dateCell(stores, found.current, "Data_Inauguracao_Planejada");
         if (previous === plannedDate)
@@ -3131,7 +3176,16 @@ function startImplantationV1(spreadsheet, user, payload) {
     const requestId = requireImplantationRequestIdV1(payload);
     assertStoreScope(user, storeId);
     return withScriptLock(() => {
+        revalidateImplantationWriteAccessV1(spreadsheet, user, storeId, [{ module: IMPLANTATION_MODULE_V1, action: "Criar" }]);
         const stores = readTable(spreadsheet, APP_CONFIG.sheets.stores, ["ID_Loja", "Status", "Data_Inauguracao_Planejada", "version"]);
+        const currentStore = findRowById(stores, "ID_Loja", storeId, "Loja").row;
+        assertStoreOperationalForImplantationV1(stores, currentStore);
+        const currentOpeningDate = dateCell(stores, currentStore, "Data_Inauguracao_Planejada");
+        if (!currentOpeningDate)
+            throw new ApiException("OPENING_DATE_REQUIRED", "Defina a data planejada de inauguração antes de iniciar.");
+        const updates = readImplantationUpdateIndexV1(spreadsheet);
+        if (updates.rows.some((row) => cell(updates, row, "Request_ID") === requestId))
+            return { idempotent: true, requestId };
         const storeFound = findVersionedRow(stores, "ID_Loja", storeId, storeVersion, "Loja");
         assertStoreOperationalForImplantationV1(stores, storeFound.current);
         const openingDate = dateCell(stores, storeFound.current, "Data_Inauguracao_Planejada");
@@ -3151,9 +3205,6 @@ function startImplantationV1(spreadsheet, user, payload) {
         if (templates.length !== 30)
             throw new ApiException("MODEL_NOT_READY", "O Checklist Mestre publicado deve possuir exatamente 30 atividades ativas.");
         const activityTable = readTable(spreadsheet, APP_CONFIG.sheets.implantationActivities, ["ID_Checklist_Loja", "ID_Implantacao", "ID_Loja", "Status", "version", "ativo"]);
-        const updates = readImplantationUpdateIndexV1(spreadsheet);
-        if (updates.rows.some((row) => cell(updates, row, "Request_ID") === requestId))
-            return { idempotent: true, requestId };
         const now = new Date();
         const implantationId = nextInternalId(cycles, "ID_Implantacao", "IMP", 6);
         const activityIds = nextInternalIdsV1(activityTable, "ID_Checklist_Loja", "CHK-LOJ", 6, templates.length);
@@ -3244,16 +3295,16 @@ function markImplantationActivityNotApplicableV1(spreadsheet, user, payload) {
 }
 function cancelImplantationActivityV1(spreadsheet, user, payload) {
     assertModulePermission(spreadsheet, user, IMPLANTATION_MODULE_V1, "Excluir");
-    return mutateImplantationActivityV1(spreadsheet, user, { ...payload, targetStatus: "CANCELADO" }, "Cancelamento", true);
+    return mutateImplantationActivityV1(spreadsheet, user, { ...payload, targetStatus: "CANCELADO" }, "Cancelamento", true, false, "Excluir");
 }
 function completeImplantationActivityV1(spreadsheet, user, payload) {
     return mutateImplantationActivityV1(spreadsheet, user, { ...payload, targetStatus: "CONCLUIDO" }, "Conclusão", false);
 }
 function reopenImplantationActivityV1(spreadsheet, user, payload) {
     assertModulePermission(spreadsheet, user, IMPLANTATION_MODULE_V1, "Reabrir");
-    return mutateImplantationActivityV1(spreadsheet, user, payload, "Reabertura", false, true);
+    return mutateImplantationActivityV1(spreadsheet, user, payload, "Reabertura", false, true, "Reabrir");
 }
-function mutateImplantationActivityV1(spreadsheet, user, payload, updateType, canCancel, canReopen = false) {
+function mutateImplantationActivityV1(spreadsheet, user, payload, updateType, canCancel, canReopen = false, additionalImplantationPermission = "") {
     assertModulePermission(spreadsheet, user, IMPLANTATION_UPDATES_MODULE_V1, "Criar");
     const activityId = requireString(payload.activityId, "activityId");
     const expectedVersion = Number(payload.version);
@@ -3261,12 +3312,16 @@ function mutateImplantationActivityV1(spreadsheet, user, payload, updateType, ca
     const reason = String(payload.reason || payload.observation || "").trim();
     return withScriptLock(() => {
         const activities = readTable(spreadsheet, APP_CONFIG.sheets.implantationActivities, ["ID_Checklist_Loja", "ID_Implantacao", "ID_Loja", "Status", "Percentual_Concluido", "version", "ativo"]);
-        const found = findVersionedRow(activities, "ID_Checklist_Loja", activityId, expectedVersion, "Atividade");
-        const storeId = cell(activities, found.current, "ID_Loja");
-        assertStoreScope(user, storeId);
+        const currentActivity = findRowById(activities, "ID_Checklist_Loja", activityId, "Atividade").row;
+        const storeId = cell(activities, currentActivity, "ID_Loja");
+        const requirements = [{ module: IMPLANTATION_UPDATES_MODULE_V1, action: "Criar" }];
+        if (additionalImplantationPermission)
+            requirements.push({ module: IMPLANTATION_MODULE_V1, action: additionalImplantationPermission });
+        revalidateImplantationWriteAccessV1(spreadsheet, user, storeId, requirements);
         const updates = readImplantationUpdateIndexV1(spreadsheet);
         if (updates.rows.some((row) => cell(updates, row, "Request_ID") === requestId))
             return { idempotent: true, requestId };
+        const found = findVersionedRow(activities, "ID_Checklist_Loja", activityId, expectedVersion, "Atividade");
         const previousStatus = implantationStatusCodeV1(cell(activities, found.current, "Status"));
         const previousProgress = Number(cell(activities, found.current, "Percentual_Concluido") || 0);
         const previousResponsible = cell(activities, found.current, "ID_Usuario_Responsavel");
@@ -3346,15 +3401,23 @@ function blockImplantationActivityV1(spreadsheet, user, payload) {
     const requestId = requireImplantationRequestIdV1(payload);
     return withScriptLock(() => {
         const activities = readTable(spreadsheet, APP_CONFIG.sheets.implantationActivities, ["ID_Checklist_Loja", "ID_Implantacao", "ID_Loja", "Status", "Percentual_Concluido", "version", "ativo"]);
-        const found = findVersionedRow(activities, "ID_Checklist_Loja", activityId, expectedVersion, "Atividade");
-        const storeId = cell(activities, found.current, "ID_Loja");
-        assertStoreScope(user, storeId);
-        const previousStatus = implantationStatusCodeV1(cell(activities, found.current, "Status"));
-        const progress = Number(cell(activities, found.current, "Percentual_Concluido") || 0);
-        validateImplantationTransitionV1({ from: previousStatus, to: "BLOQUEADO", currentProgress: progress, reason });
+        const currentActivity = findRowById(activities, "ID_Checklist_Loja", activityId, "Atividade").row;
+        const storeId = cell(activities, currentActivity, "ID_Loja");
+        revalidateImplantationWriteAccessV1(spreadsheet, user, storeId, [{ module: IMPLANTATION_UPDATES_MODULE_V1, action: "Criar" }]);
         const updates = readImplantationUpdateIndexV1(spreadsheet);
         if (updates.rows.some((row) => cell(updates, row, "Request_ID") === requestId))
             return { idempotent: true, requestId };
+        const responsibleRole = String(payload.responsibleRole || "").trim();
+        const allowedResponsibleRoles = ["Equipe interna", "Equipe de campo", "RH", "Contratado"];
+        if (responsibleRole && allowedResponsibleRoles.indexOf(responsibleRole) < 0)
+            throw new ApiException("VALIDATION_ERROR", "Papel responsável pelo desbloqueio inválido.");
+        const unblockResponsibleUserId = String(payload.responsibleUserId || "").trim();
+        if (unblockResponsibleUserId)
+            assertEligibleImplantationResponsibleV1(spreadsheet, unblockResponsibleUserId, storeId);
+        const found = findVersionedRow(activities, "ID_Checklist_Loja", activityId, expectedVersion, "Atividade");
+        const previousStatus = implantationStatusCodeV1(cell(activities, found.current, "Status"));
+        const progress = Number(cell(activities, found.current, "Percentual_Concluido") || 0);
+        validateImplantationTransitionV1({ from: previousStatus, to: "BLOQUEADO", currentProgress: progress, reason });
         const blocks = readTable(spreadsheet, APP_CONFIG.sheets.implantationBlocks, ["ID_Bloqueio", "ID_Checklist_Loja", "Data_Desbloqueio", "version", "ativo"]);
         if (blocks.rows.some((row) => isActiveImplantationRowV1(blocks, row) && cell(blocks, row, "ID_Checklist_Loja") === activityId && !dateCell(blocks, row, "Data_Desbloqueio"))) {
             throw new ApiException("ACTIVE_BLOCK_EXISTS", "A atividade já possui um bloqueio ativo.");
@@ -3375,8 +3438,8 @@ function blockImplantationActivityV1(spreadsheet, user, payload) {
         setCell(blocks, blockRow, "Motivo_Bloqueio", reason);
         setCell(blocks, blockRow, "Status_Anterior", implantationStatusLabelV1(previousStatus));
         setCell(blocks, blockRow, "Progresso_No_Bloqueio", progress);
-        setCell(blocks, blockRow, "Papel_Responsavel_Desbloqueio", String(payload.responsibleRole || ""));
-        setCell(blocks, blockRow, "ID_Usuario_Responsavel_Desbloqueio", String(payload.responsibleUserId || ""));
+        setCell(blocks, blockRow, "Papel_Responsavel_Desbloqueio", responsibleRole);
+        setCell(blocks, blockRow, "ID_Usuario_Responsavel_Desbloqueio", unblockResponsibleUserId);
         setCell(blocks, blockRow, "Data_Bloqueio", now);
         setCell(blocks, blockRow, "ID_Usuario_Bloqueio", user.id);
         setCell(blocks, blockRow, "ativo", "Sim");
@@ -3411,9 +3474,13 @@ function unblockImplantationActivityV1(spreadsheet, user, payload) {
     const observation = requireString(payload.reason, "reason");
     return withScriptLock(() => {
         const activities = readTable(spreadsheet, APP_CONFIG.sheets.implantationActivities, ["ID_Checklist_Loja", "ID_Implantacao", "ID_Loja", "Status", "Percentual_Concluido", "version", "ativo"]);
+        const currentActivity = findRowById(activities, "ID_Checklist_Loja", activityId, "Atividade").row;
+        const storeId = cell(activities, currentActivity, "ID_Loja");
+        revalidateImplantationWriteAccessV1(spreadsheet, user, storeId, [{ module: IMPLANTATION_UPDATES_MODULE_V1, action: "Criar" }]);
+        const updates = readImplantationUpdateIndexV1(spreadsheet);
+        if (updates.rows.some((row) => cell(updates, row, "Request_ID") === requestId))
+            return { idempotent: true, requestId };
         const found = findVersionedRow(activities, "ID_Checklist_Loja", activityId, expectedVersion, "Atividade");
-        const storeId = cell(activities, found.current, "ID_Loja");
-        assertStoreScope(user, storeId);
         if (implantationStatusCodeV1(cell(activities, found.current, "Status")) !== "BLOQUEADO")
             throw new ApiException("INVALID_TRANSITION", "A atividade não está bloqueada.");
         const blocks = readTable(spreadsheet, APP_CONFIG.sheets.implantationBlocks, ["ID_Bloqueio", "ID_Checklist_Loja", "Status_Anterior", "Data_Desbloqueio", "version", "ativo"]);
@@ -3425,13 +3492,11 @@ function unblockImplantationActivityV1(spreadsheet, user, payload) {
         const target = implantationStatusCodeV1(cell(blocks, block, "Status_Anterior"));
         const progress = Number(cell(activities, found.current, "Percentual_Concluido") || 0);
         const nextStatus = target === "NAO_INICIADO" ? "NAO_INICIADO" : "EM_ANDAMENTO";
-        validateImplantationTransitionV1({ from: "BLOQUEADO", to: nextStatus, currentProgress: progress, requestedProgress: nextStatus === "EM_ANDAMENTO" ? Math.max(progress, 25) : 0 });
-        const updates = readImplantationUpdateIndexV1(spreadsheet);
-        if (updates.rows.some((row) => cell(updates, row, "Request_ID") === requestId))
-            return { idempotent: true, requestId };
+        const nextProgress = nextStatus === "EM_ANDAMENTO" ? Math.max(progress, 25) : 0;
+        validateImplantationTransitionV1({ from: "BLOQUEADO", to: nextStatus, currentProgress: progress, requestedProgress: nextProgress });
         const now = new Date();
         setCell(activities, found.current, "Status", implantationStatusLabelV1(nextStatus));
-        setCell(activities, found.current, "Percentual_Concluido", nextStatus === "NAO_INICIADO" ? 0 : Math.max(progress, 25));
+        setCell(activities, found.current, "Percentual_Concluido", nextProgress);
         setCell(activities, found.current, "Ultima_Observacao", observation);
         setCell(activities, found.current, "Ultima_Atualizacao_Em", now);
         setCell(activities, found.current, "version", found.currentVersion + 1);
@@ -3446,7 +3511,7 @@ function unblockImplantationActivityV1(spreadsheet, user, payload) {
         const updateId = nextInternalId(updates, "ID_Atualizacao", "ATU", 6);
         const updateRow = buildImplantationUpdateRowV1(updates, updateId, {
             activityId, implantationId: cell(activities, found.current, "ID_Implantacao"), storeId, type: "Desbloqueio", text: observation,
-            previousStatus: "BLOQUEADO", nextStatus, previousProgress: progress, nextProgress: nextStatus === "NAO_INICIADO" ? 0 : Math.max(progress, 25),
+            previousStatus: "BLOQUEADO", nextStatus, previousProgress: progress, nextProgress,
             previousResponsible: cell(activities, found.current, "ID_Usuario_Responsavel"), nextResponsible: cell(activities, found.current, "ID_Usuario_Responsavel"), requestId,
         }, user, now);
         const ar = activities.sheet.getRange(physicalRowNumber(activities, found.rowIndex), 1, 1, activities.headers.length);
@@ -3455,7 +3520,13 @@ function unblockImplantationActivityV1(spreadsheet, user, payload) {
         performAtomicWritesV1(spreadsheet, user, [
             { range: ar, previous: restorableMatrixV1(ar), next: [found.current] }, { range: br, previous: restorableMatrixV1(br), next: [block] },
             { range: ur, previous: restorableMatrixV1(ur), next: [updateRow] },
-        ], [{ module: "IMPLANTACAO_BLOQUEIOS", recordId: cell(blocks, block, "ID_Bloqueio"), changes: [{ field: "Data_Desbloqueio", previous: "", next: now }], reason: observation, reference: requestId }]);
+        ], [
+            { module: "IMPLANTACAO_ATIVIDADES", recordId: activityId, changes: [
+                    { field: "Status", previous: "BLOQUEADO", next: nextStatus },
+                    { field: "Percentual_Concluido", previous: progress, next: nextProgress },
+                ], reason: observation, reference: requestId },
+            { module: "IMPLANTACAO_BLOQUEIOS", recordId: cell(blocks, block, "ID_Bloqueio"), changes: [{ field: "Data_Desbloqueio", previous: "", next: now }], reason: observation, reference: requestId },
+        ]);
         return { activityId, updateId, requestId };
     });
 }
@@ -3501,6 +3572,7 @@ function changePlannedOpeningDateV1(spreadsheet, user, payload) {
     const requestId = requireImplantationRequestIdV1(payload);
     assertStoreScope(user, storeId);
     return withScriptLock(() => {
+        revalidateImplantationWriteAccessV1(spreadsheet, user, storeId, [{ module: IMPLANTATION_MODULE_V1, action: "Editar" }]);
         const updates = readImplantationUpdateIndexV1(spreadsheet);
         if (updates.rows.some((row) => cell(updates, row, "Request_ID") === requestId))
             return { idempotent: true, requestId };
@@ -3521,6 +3593,7 @@ function changePlannedOpeningDateV1(spreadsheet, user, payload) {
                 throw new ApiException("VERSION_CONFLICT", `A atividade ${impact.activityId} mudou após a prévia.`);
         });
         const previousDate = dateCell(cycles, cycleFound.current, "Data_Inauguracao_Planejada_Atual");
+        const previousStoreDate = dateCell(stores, storeFound.current, "Data_Inauguracao_Planejada");
         const now = new Date();
         setCell(stores, storeFound.current, "Data_Inauguracao_Planejada", newDate);
         setCell(stores, storeFound.current, "version", storeFound.currentVersion + 1);
@@ -3567,7 +3640,7 @@ function changePlannedOpeningDateV1(spreadsheet, user, payload) {
         const updateStart = findFirstWritableRow(updates, "ID_Atualizacao", updateRows.length);
         const ur = updates.sheet.getRange(updateStart, 1, updateRows.length, updates.headers.length);
         writes.push({ range: ur, previous: restorableMatrixV1(ur), next: updateRows });
-        audits.unshift({ module: "IMPLANTACAO", recordId: cycleId, changes: [{ field: "Data_Inauguracao_Planejada_Atual", previous: previousDate, next: newDate }], reason, reference: requestId });
+        audits.unshift({ module: "IMPLANTACAO_LOJA", recordId: storeId, changes: [{ field: "Data_Inauguracao_Planejada", previous: previousStoreDate, next: newDate }], reason, reference: requestId }, { module: "IMPLANTACAO", recordId: cycleId, changes: [{ field: "Data_Inauguracao_Planejada_Atual", previous: previousDate, next: newDate }], reason, reference: requestId });
         performAtomicWritesV1(spreadsheet, user, writes, audits);
         return { implantationId: cycleId, previousDate, nextDate: newDate, activitiesChanged: changedRows.length, requestId };
     });

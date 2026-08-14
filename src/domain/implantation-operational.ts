@@ -5,8 +5,14 @@ export interface ImplantationCapabilities {
   viewUpdates: boolean;
   viewMaster: boolean;
   setOpeningDate: boolean;
+  previewOpeningDateChange: boolean;
+  changePlannedOpeningDate: boolean;
   start: boolean;
   updateActivity: boolean;
+  blockActivity: boolean;
+  unblockActivity: boolean;
+  markNotApplicable: boolean;
+  completeActivity: boolean;
   cancelActivity: boolean;
   reopenActivity: boolean;
   evidenceFilesEnabled: false;
