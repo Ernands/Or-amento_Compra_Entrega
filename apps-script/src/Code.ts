@@ -291,6 +291,44 @@ function dispatchAuthenticatedAction(action: string, payload: Record<string, unk
       return createItem(spreadsheet, user, payload);
     case "updateItem":
       return updateItem(spreadsheet, user, payload);
+    case "implantationCapabilities":
+      return buildImplantationCapabilitiesV1(spreadsheet, user);
+    case "implantationOverview":
+      return buildImplantationOverviewV1(spreadsheet, user);
+    case "implantationChecklists":
+      return buildImplantationChecklistsV1(spreadsheet, user);
+    case "implantationPendencies":
+      return buildImplantationPendenciesV1(spreadsheet, user);
+    case "implantationStoreDetail":
+      return buildImplantationStoreDetailV1(spreadsheet, user, payload);
+    case "implantationActivityDetail":
+      return buildImplantationActivityDetailV1(spreadsheet, user, payload);
+    case "implantationTimeline":
+      return buildImplantationTimelineV1(spreadsheet, user, payload);
+    case "implantationMasterChecklist":
+      return buildImplantationMasterChecklistV1(spreadsheet, user);
+    case "setPlannedOpeningDate":
+      return setPlannedOpeningDateV1(spreadsheet, user, payload);
+    case "startImplantation":
+      return startImplantationV1(spreadsheet, user, payload);
+    case "updateImplantationActivity":
+      return updateImplantationActivityV1(spreadsheet, user, payload);
+    case "blockImplantationActivity":
+      return blockImplantationActivityV1(spreadsheet, user, payload);
+    case "unblockImplantationActivity":
+      return unblockImplantationActivityV1(spreadsheet, user, payload);
+    case "markImplantationActivityNotApplicable":
+      return markImplantationActivityNotApplicableV1(spreadsheet, user, payload);
+    case "cancelImplantationActivity":
+      return cancelImplantationActivityV1(spreadsheet, user, payload);
+    case "completeImplantationActivity":
+      return completeImplantationActivityV1(spreadsheet, user, payload);
+    case "reopenImplantationActivity":
+      return reopenImplantationActivityV1(spreadsheet, user, payload);
+    case "previewOpeningDateChange":
+      return previewOpeningDateChangeV1(spreadsheet, user, payload);
+    case "changePlannedOpeningDate":
+      return changePlannedOpeningDateV1(spreadsheet, user, payload);
     default:
       throw new ApiException("UNKNOWN_ACTION", "Ação não reconhecida.");
   }

@@ -3,11 +3,12 @@ import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 
 const root = new URL("../", import.meta.url);
-const [compiled, deployCode, sourceManifest, deployManifest] = await Promise.all([
+const [compiled, deployCode, sourceManifest, deployManifest, implantationOperationsSource] = await Promise.all([
   readFile(new URL("apps-script/dist/Code.js", root), "utf8"),
   readFile(new URL("apps-script/deploy/Code.gs", root), "utf8"),
   readFile(new URL("apps-script/appsscript.json", root), "utf8"),
   readFile(new URL("apps-script/deploy/appsscript.json", root), "utf8"),
+  readFile(new URL("apps-script/src/ImplantationOperations.ts", root), "utf8"),
 ]);
 
 assert.equal(deployCode, compiled, "Code.gs diverge do JavaScript compilado.");
@@ -31,6 +32,31 @@ for (const action of ["createSupplier", "createQuote", "updateQuote", "deleteQuo
 for (const action of ["publicBootstrap", "publicQuotesWorkspace"]) {
   assert.match(publicDispatchCode, new RegExp(`case "${action}":`), `${action} deve pertencer ao dispatch público.`);
 }
+for (const action of [
+  "implantationCapabilities", "implantationOverview", "implantationChecklists", "implantationPendencies",
+  "implantationStoreDetail", "implantationActivityDetail", "implantationTimeline", "implantationMasterChecklist",
+  "setPlannedOpeningDate", "startImplantation", "updateImplantationActivity", "blockImplantationActivity",
+  "unblockImplantationActivity", "markImplantationActivityNotApplicable", "cancelImplantationActivity",
+  "completeImplantationActivity", "reopenImplantationActivity", "previewOpeningDateChange", "changePlannedOpeningDate",
+]) {
+  assert.match(deployCode, new RegExp(`case "${action}":`), `A ação autenticada ${action} está ausente.`);
+  assert.doesNotMatch(publicDispatchCode, new RegExp(action), `${action} não pode pertencer ao dispatch público.`);
+}
+for (const operation of [
+  "setPlannedOpeningDateV1", "startImplantationV1", "updateImplantationActivityV1", "blockImplantationActivityV1",
+  "unblockImplantationActivityV1", "markImplantationActivityNotApplicableV1", "cancelImplantationActivityV1",
+  "completeImplantationActivityV1", "reopenImplantationActivityV1", "changePlannedOpeningDateV1",
+]) {
+  assert.match(deployCode, new RegExp(`function ${operation}[\\s\\S]*?withScriptLock\\(`), `${operation} deve usar LockService.`);
+}
+assert.match(deployCode, /function startImplantationV1[\s\S]*?templates\.length !== 30[\s\S]*?nextInternalIdsV1/, "O início deve validar o mestre e gerar 30 atividades.");
+assert.match(deployCode, /nextInternalIdsV1\(activityTable, "ID_Checklist_Loja", "CHK-LOJ", 6, templates\.length\)/, "As atividades da loja devem usar IDs CHK-LOJ-*.");
+assert.match(deployCode, /function assertStoreOperationalForImplantationV1[\s\S]*?status !== "ativa"/, "O início deve exigir loja com status Ativa.");
+assert.match(deployCode, /function mutateImplantationActivityV1[\s\S]*?findVersionedRow[\s\S]*?Request_ID/, "Atualizações devem validar version e Request_ID.");
+assert.match(deployCode, /function buildImplantationCapabilitiesV1[\s\S]*?hasModulePermission/, "Capabilities devem ser derivadas de 10_PERMISSOES.");
+assert.match(deployCode, /function buildImplantationTimelineV1[\s\S]*?pageSize[\s\S]*?nextCursor/, "A linha do tempo deve ser paginada.");
+assert.doesNotMatch(implantationOperationsSource, /APP_CONFIG\.sheets\.files/, "A fase operacional não pode ler 24_ARQUIVOS.");
+assert.doesNotMatch(implantationOperationsSource, /setupImplantationV1\(/, "A fase operacional não pode executar setup.");
 assert.match(deployCode, /function updateStore\(/, "updateStore ausente.");
 assert.match(deployCode, /case "createItem":/, "A ação createItem não está no dispatch autenticado.");
 assert.match(deployCode, /function createItem[\s\S]*?return withScriptLock\(/, "createItem deve usar LockService.");

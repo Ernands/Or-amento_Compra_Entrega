@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, Building2, CircleCheck, CircleOff, Pencil, Search, UserRoundPlus } from "lucide-react";
+import { ArrowRight, Building2, CircleCheck, CircleOff, ClipboardCheck, Pencil, Search, UserRoundPlus } from "lucide-react";
 
 import { useAuth } from "@/auth/auth-context";
 import { PageHeader } from "@/components/app/page-header";
@@ -13,11 +13,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useOperations } from "@/context/operations-context";
+import { useImplantationAccess } from "@/context/implantation-access-context";
 import type { Store } from "@/domain/entities";
 
 export function StoresPage() {
   const { accessMode, user } = useAuth();
   const { stores, loading, error, refresh, updateStore } = useOperations();
+  const { capabilities: implantationCapabilities } = useImplantationAccess();
   const [query, setQuery] = useState("");
   const [editingStore, setEditingStore] = useState<Store | null>(null);
   const filtered = useMemo(() => {
@@ -38,7 +40,7 @@ export function StoresPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader eyebrow="Cadastros" title="Lojas" description={visitor ? "Unidades previstas e seus dados operacionais de implantação." : "As 27 unidades previstas e seus dados de implantação. Use Editar para atualizar a planilha DEV."} />
+      <PageHeader eyebrow="Cadastros" title="Lojas" description={visitor ? "Unidades previstas e seus dados operacionais de implantação." : "As 27 unidades previstas e seus dados de implantação. Use Editar para atualizar a planilha DEV."} actions={implantationCapabilities?.view ? <Button asChild variant="outline"><Link to="/implantacao"><ClipboardCheck />Visão de implantação</Link></Button> : undefined} />
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Resumo das lojas">
         <MetricCard label="Lojas" value={storeCounts.total} helper="unidades no escopo atual" icon={Building2} />
         <MetricCard label="Ativas" value={storeCounts.active} helper="unidades ativas" icon={CircleCheck} />
