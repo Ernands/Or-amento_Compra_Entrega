@@ -5,7 +5,6 @@ import type { LucideIcon } from "lucide-react";
 import { MetricCard } from "@/components/app/metric-card";
 import { PageHeader } from "@/components/app/page-header";
 import { ErrorPanel, LoadingPanel } from "@/components/app/page-state";
-import { SourceBanner } from "@/components/app/source-banner";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,7 +20,6 @@ export function DashboardPage() {
   const { metrics, stores, areas } = dashboard;
   return <div className="space-y-6">
     <PageHeader eyebrow="Visão executiva" title="Dashboard de implantação" description="Acompanhe a preparação das 27 lojas, do levantamento inicial à conferência da entrega." />
-    <SourceBanner source={source} />
     <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Indicadores principais">
       <MetricCard label="Lojas" value={metrics.stores} helper="previstas no escopo oficial" icon={Building2} />
       <MetricCard label="Itens do catálogo" value={metrics.items} helper={`${metrics.duplicateCodeItems} afetados por códigos duplicados`} icon={Boxes} tone="yellow" />

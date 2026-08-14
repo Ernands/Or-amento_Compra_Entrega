@@ -4,7 +4,6 @@ import { AlertTriangle, CheckCircle2, FileSpreadsheet, GitBranch, RefreshCw, Ser
 import { PageHeader } from "@/components/app/page-header";
 import { ErrorPanel, LoadingPanel } from "@/components/app/page-state";
 import { RefreshButton } from "@/components/app/refresh-button";
-import { SourceBanner } from "@/components/app/source-banner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useOperations } from "@/context/operations-context";
 import type { TechnicalStatus, TechnicalTableStatus } from "@/domain/entities";
@@ -49,7 +48,6 @@ export function DiagnosticPage() {
         description="Verificações autenticadas e somente leitura da planilha e do ambiente DEV."
         actions={<RefreshButton onRefresh={refreshAll} refreshing={loading || technicalLoading} />}
       />
-      <SourceBanner source={source} />
       <div className="grid gap-4 xl:grid-cols-[1.15fr_.85fr]">
         <Card className="shadow-none">
           <CardHeader>

@@ -33,6 +33,8 @@ for (const action of ["publicBootstrap", "publicQuotesWorkspace"]) {
 }
 assert.match(deployCode, /function updateStore\(/, "updateStore ausente.");
 assert.match(deployCode, /function updateItem\(/, "updateItem ausente.");
+assert.match(deployCode, /function updateItem[\s\S]*?buildItemDefinitionNecessitySyncPlanV1[\s\S]*?performAtomicWritesV1/, "updateItem deve sincronizar necessidades na mesma gravação atômica.");
+assert.match(deployCode, /function buildItemDefinitionNecessitySyncPlanV1\(/, "Planejamento da sincronização Item → Necessidades ausente.");
 for (const action of ["quotesWorkspace", "createSupplier", "createQuote", "updateQuote", "deleteQuote", "selectQuote"]) {
   assert.match(deployCode, new RegExp(`case "${action}":`), `A ação ${action} não está no dispatch autenticado.`);
 }
@@ -234,6 +236,40 @@ assert.equal(authenticatedLegacyQuote.necessityIds.length, 1);
 assert.equal(authenticatedLegacyQuote.necessityIds[0], "NEC-000001");
 assert.equal(authenticatedLegacyQuote.lines.length, 1);
 assert.equal(authenticatedLegacyQuote.lines[0].necessityId, "NEC-000001");
+
+function itemDefinitionSyncTable(rows) {
+  const spreadsheet = {
+    getSheetByName: (name) => name === "03_NECESSIDADES" ? fakeDataSheet(
+      ["ID_Necessidade", "ID_Loja", "ID_Item", "Qtd_Planejada", "Status", "version", "updated_at", "updated_by"],
+      rows,
+    ) : null,
+  };
+  return sandbox.readTable(spreadsheet, "03_NECESSIDADES", ["ID_Necessidade", "ID_Loja", "ID_Item", "Qtd_Planejada", "Status", "version", "updated_at", "updated_by"]);
+}
+
+const releaseDefinitionPlan = sandbox.buildItemDefinitionNecessitySyncPlanV1(itemDefinitionSyncTable([
+  ["NEC-000001", "LOJ-001", "ITM-00002", 1, "Pendente definição", 1, "", ""],
+  ["NEC-000002", "LOJ-002", "ITM-00002", 2, "Pendente definição", 1, "", ""],
+  ["NEC-000003", "LOJ-003", "ITM-00003", 1, "Pendente definição", 1, "", ""],
+]), "ITM-00002", "PENDENTE_DEFINICAO", "LIBERADO_PARA_COTACAO");
+assert.equal(releaseDefinitionPlan.length, 2);
+assert.equal(releaseDefinitionPlan[0].necessityId, "NEC-000001");
+assert.equal(releaseDefinitionPlan[1].necessityId, "NEC-000002");
+
+const returnToPendingPlan = sandbox.buildItemDefinitionNecessitySyncPlanV1(itemDefinitionSyncTable([
+  ["NEC-000001", "LOJ-001", "ITM-00002", 1, "Não iniciado", 2, "", ""],
+  ["NEC-000002", "LOJ-002", "ITM-00002", 1, "Pendente definição", 1, "", ""],
+]), "ITM-00002", "LIBERADO_PARA_COTACAO", "PENDENTE_DEFINICAO");
+assert.equal(returnToPendingPlan.length, 1);
+assert.equal(returnToPendingPlan[0].necessityId, "NEC-000001");
+
+assert.throws(
+  () => sandbox.buildItemDefinitionNecessitySyncPlanV1(itemDefinitionSyncTable([
+    ["NEC-000001", "LOJ-001", "ITM-00002", 1, "Em cotação", 3, "", ""],
+  ]), "ITM-00002", "LIBERADO_PARA_COTACAO", "PENDENTE_DEFINICAO"),
+  /cotação ou etapa posterior/i,
+  "Item em uso não pode retornar para Pendente definição.",
+);
 
 const invalidTotalRow = legacyQuoteRow.slice();
 invalidTotalRow[10] = 999;
@@ -543,7 +579,7 @@ console.log("✓ urlFetchWhitelist limitada a https://oauth2.googleapis.com/toke
 console.log("✓ SPREADSHEET_ID e GOOGLE_CLIENT_ID usam PropertiesService");
 console.log("✓ ID da planilha DEV não está hardcoded em Code.gs");
 console.log("✓ doGet health e doPost health responderam corretamente");
-console.log("✓ updateStore e updateItem compilados com permissão centralizada");
+console.log("✓ updateStore e updateItem compilados com permissão centralizada; status do item sincroniza necessidades atomicamente");
 console.log("✓ technicalStatus autenticado verifica 12 abas lendo no máximo 10 linhas por aba");
 console.log("✓ contrato de Cotações compilado com lock, version e dispatch autenticado");
 console.log("✓ exclusão de cotação é lógica, versionada e removida das consultas ativas");

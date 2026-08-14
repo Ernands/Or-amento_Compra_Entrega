@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { AppsScriptClient } from "@/data/api/apps-script-client";
 import type { BootstrapPayload, ViewBootstrapPayload } from "@/data/api/apps-script-operations-repository";
@@ -34,6 +35,7 @@ const snapshotUser: SessionUser = {
 };
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const navigate = useNavigate();
   const endpoint = import.meta.env.VITE_APPS_SCRIPT_URL?.trim();
   const developmentMode = !endpoint || !import.meta.env.VITE_GOOGLE_CLIENT_ID;
   const [accessMode, setAccessMode] = useState<AccessMode | null>(developmentMode ? "snapshot" : null);
@@ -59,6 +61,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setBootstrapError("");
       setUser(result.user);
       setCredential(token);
+      navigate("/", { replace: true });
       setAccessMode("authenticated");
     } catch (error) {
       setBootstrap(null);
@@ -68,7 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setSigningIn(false);
     }
-  }, [endpoint]);
+  }, [endpoint, navigate]);
 
   const enterVisitor = useCallback(async () => {
     if (!endpoint) {
@@ -83,13 +86,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setBootstrapError("");
       setUser(null);
       setCredential(null);
+      navigate("/", { replace: true });
       setAccessMode("visitor");
     } catch (error) {
       setSignInError(error instanceof Error ? error.message : "Não foi possível abrir o modo visitante.");
     } finally {
       setEnteringVisitor(false);
     }
-  }, [endpoint]);
+  }, [endpoint, navigate]);
 
   const refreshBootstrap = useCallback(async () => {
     if (!endpoint || accessMode === "snapshot") return;

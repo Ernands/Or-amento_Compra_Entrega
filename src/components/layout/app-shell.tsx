@@ -1,13 +1,16 @@
-import { Bell, CircleUserRound, Eye } from "lucide-react";
+import { Bell, CircleUserRound } from "lucide-react";
 import { Outlet } from "react-router-dom";
 
 import { useAuth } from "@/auth/auth-context";
 import { DesktopNavigation, MobileNavigation } from "@/components/layout/navigation";
 import { RefreshButton } from "@/components/app/refresh-button";
+import { SourceStatusCompact } from "@/components/app/source-banner";
 import { Button } from "@/components/ui/button";
+import { useOperations } from "@/context/operations-context";
 
 export function AppShell() {
   const { accessMode, user, developmentMode, signOut } = useAuth();
+  const { loading, source } = useOperations();
   const visitor = accessMode === "visitor";
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[248px_minmax(0,1fr)]">
@@ -39,6 +42,7 @@ export function AppShell() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <SourceStatusCompact source={source} visitor={visitor} loading={loading} />
             <RefreshButton />
             <Button variant="ghost" size="icon" aria-label="Notificações">
               <Bell className="size-4" />
@@ -54,7 +58,7 @@ export function AppShell() {
             </div>
           </div>
         </header>
-        <main className="mx-auto w-full max-w-[1600px] p-4 md:p-6 lg:p-8">{visitor ? <div className="mb-6 flex flex-col gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-blue-950 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><Eye className="size-5 shrink-0 text-blue-700" /><div><p className="text-sm font-semibold">Modo visitante — somente leitura</p><p className="text-xs text-blue-900/70">Você pode visualizar os dados operacionais, mas nenhuma alteração é permitida.</p></div></div><Button variant="outline" size="sm" onClick={signOut}>Entre com Google para realizar alterações</Button></div> : null}<Outlet /></main>
+        <main className="mx-auto w-full max-w-[1600px] p-4 md:p-6 lg:p-8"><Outlet /></main>
       </div>
     </div>
   );

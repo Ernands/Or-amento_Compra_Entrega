@@ -1605,6 +1605,7 @@ function updateItem(
   return withScriptLock(() => {
     const table = readTable(spreadsheet, APP_CONFIG.sheets.items, ["ID_Item", "Item", "version", "updated_at", "updated_by"]);
     const { current, rowIndex, currentVersion } = findVersionedRow(table, "ID_Item", id, expectedVersion, "Item");
+    const previousDefinitionStatus = normalizeDefinitionStatusV1(cell(table, current, "Status_Especificação"));
     const auditedChanges: Array<{ field: string; previous: unknown; next: unknown }> = [];
     applyChange(table, current, "Código_Original", changes.operationalCode, validateRequiredText, auditedChanges);
     applyChange(table, current, "Grupo", changes.group, validateRequiredText, auditedChanges);
@@ -1618,9 +1619,72 @@ function updateItem(
     applyChange(table, current, "Rota_2", changes.route2, validateShortText, auditedChanges);
     applyChange(table, current, "Rota_3", changes.route3, validateShortText, auditedChanges);
     applyChange(table, current, "Observações", changes.notes, validateText, auditedChanges);
-    persistUpdatedRow(spreadsheet, table, rowIndex, current, currentVersion, user, "ITENS", id, auditedChanges, String(payload.reason || ""));
-    return { item: mapItem(table, current) };
+    if (!auditedChanges.length) throw new ApiException("VALIDATION_ERROR", "Nenhuma alteração válida foi informada.");
+
+    const nextDefinitionStatus = normalizeDefinitionStatusV1(cell(table, current, "Status_Especificação"));
+    const necessities = readTable(spreadsheet, APP_CONFIG.sheets.necessities, ["ID_Necessidade", "ID_Loja", "ID_Item", "Qtd_Planejada", "Status", "version", "updated_at", "updated_by"]);
+    const synchronized = buildItemDefinitionNecessitySyncPlanV1(necessities, id, previousDefinitionStatus, nextDefinitionStatus);
+    const now = new Date();
+    setCell(table, current, "version", currentVersion + 1);
+    setCell(table, current, "updated_at", now);
+    setCell(table, current, "updated_by", user.id);
+
+    const itemRange = table.sheet.getRange(physicalRowNumber(table, rowIndex), 1, 1, table.headers.length);
+    const writes: AtomicSheetWriteV1[] = [{ range: itemRange, previous: restorableMatrixV1(itemRange), next: [current] }];
+    const audits: AuditEntry[] = [{
+      module: "ITENS",
+      recordId: id,
+      changes: auditedChanges,
+      reason: String(payload.reason || "Item atualizado."),
+      action: "ALTERACAO",
+    }];
+    synchronized.forEach((scope) => appendNecessityStatusWriteV1(
+      necessities,
+      scope,
+      nextDefinitionStatus === "LIBERADO_PARA_COTACAO" ? "NAO_INICIADO" : "PENDENTE_DEFINICAO",
+      user,
+      now,
+      writes,
+      audits,
+      `Status sincronizado a partir do item ${id}.`,
+    ));
+    performAtomicWritesV1(spreadsheet, user, writes, audits);
+    return { item: mapItem(table, current), synchronizedNecessities: synchronized.length };
   });
+}
+
+function buildItemDefinitionNecessitySyncPlanV1(
+  table: SheetTable,
+  itemId: string,
+  previousDefinitionStatus: "PENDENTE_DEFINICAO" | "LIBERADO_PARA_COTACAO",
+  nextDefinitionStatus: "PENDENTE_DEFINICAO" | "LIBERADO_PARA_COTACAO",
+): GroupedQuoteScopeLineV1[] {
+  if (previousDefinitionStatus === nextDefinitionStatus) return [];
+  const linked = table.rows.map((row, rowIndex) => ({ row, rowIndex }))
+    .filter(({ row }) => cell(table, row, "ID_Item") === itemId);
+
+  if (nextDefinitionStatus === "PENDENTE_DEFINICAO") {
+    const blockers = linked
+      .filter(({ row }) => ["PENDENTE_DEFINICAO", "NAO_INICIADO"].indexOf(normalizeStatus(cell(table, row, "Status"))) < 0)
+      .map(({ row }) => ({ necessityId: cell(table, row, "ID_Necessidade"), status: normalizeStatus(cell(table, row, "Status")) }));
+    if (blockers.length) {
+      throw new ApiException(
+        "ITEM_DEFINITION_IN_USE",
+        "O item possui necessidades em cotação ou etapa posterior. Conclua ou reverta esses processos antes de retornar o item para Pendente definição.",
+        { blockers },
+      );
+    }
+  }
+
+  const sourceStatus = nextDefinitionStatus === "LIBERADO_PARA_COTACAO" ? "PENDENTE_DEFINICAO" : "NAO_INICIADO";
+  return linked.filter(({ row }) => normalizeStatus(cell(table, row, "Status")) === sourceStatus).map(({ row, rowIndex }) => ({
+    necessityId: cell(table, row, "ID_Necessidade"),
+    storeId: cell(table, row, "ID_Loja"),
+    itemId,
+    quantity: Number(cell(table, row, "Qtd_Planejada") || 0),
+    necessityRow: row,
+    necessityRowIndex: rowIndex,
+  }));
 }
 
 function verifyGoogleCredential(token: string): TokenClaims {
@@ -2030,6 +2094,7 @@ function validateShortText(value: unknown): string { if (typeof value !== "strin
 function validateUf(value: unknown): string { const result = validateShortText(value).toLocaleUpperCase(); if (result && !/^[A-Z]{2}$/.test(result)) throw new ApiException("VALIDATION_ERROR", "UF deve conter duas letras."); return result; }
 function validateOptionalEmail(value: unknown): string { const result = validateShortText(value).toLocaleLowerCase(); if (result && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result)) throw new ApiException("VALIDATION_ERROR", "E-mail inválido."); return result; }
 function validateDefinitionStatus(value: unknown): string { const status = requireString(value, "definitionStatus"); if (status === "PENDENTE_DEFINICAO") return "Pendente definição"; if (status === "LIBERADO_PARA_COTACAO") return "Liberado para cotação"; throw new ApiException("VALIDATION_ERROR", "Status de especificação inválido."); }
+function normalizeDefinitionStatusV1(value: unknown): "PENDENTE_DEFINICAO" | "LIBERADO_PARA_COTACAO" { const key = normalizeHeader(value); if (key === "pendentedefinicao") return "PENDENTE_DEFINICAO"; if (key === "liberadoparacotacao") return "LIBERADO_PARA_COTACAO"; throw new ApiException("STRUCTURE_ERROR", "Status de especificação do item inválido."); }
 function validateYesNo(value: unknown): string { if (typeof value !== "boolean") throw new ApiException("VALIDATION_ERROR", "Ativo deve ser verdadeiro ou falso."); return value ? "Sim" : "Não"; }
 function validatePriority(value: unknown): string { const result = requireString(value, "priority").toLocaleUpperCase(); if (["BAIXA", "MEDIA", "ALTA", "CRITICA"].indexOf(normalizeText(result).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleUpperCase()) < 0) throw new ApiException("VALIDATION_ERROR", "Prioridade inválida."); return result; }
 function validateText(value: unknown): string { if (typeof value !== "string" || value.length > 2000) throw new ApiException("VALIDATION_ERROR", "Texto inválido ou muito longo."); return value.trim(); }

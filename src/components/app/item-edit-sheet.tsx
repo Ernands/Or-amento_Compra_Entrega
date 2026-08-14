@@ -71,6 +71,7 @@ export function ItemEditSheet({ item, open, onOpenChange, onSave }: ItemEditShee
                 <option value="LIBERADO_PARA_COTACAO">Liberado para cotação</option>
                 <option value="PENDENTE_DEFINICAO">Pendente definição</option>
               </select>
+              <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">Ao liberar, as necessidades pendentes deste item passam para Não iniciado e ficam disponíveis para cotação.</p>
             </Field>
             <Field label="Situação" htmlFor="item-active">
               <select id="item-active" value={form.active ? "true" : "false"} onChange={(event) => update("active", event.target.value === "true")} className="h-9 w-full rounded-md border bg-transparent px-3 text-sm">
