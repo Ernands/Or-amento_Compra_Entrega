@@ -129,6 +129,43 @@ assert.doesNotMatch(
   "A funcao publica de prevalidacao deve ser estritamente somente leitura.",
 );
 
+assert.match(deployCode, /function prevalidateImplantationV1\(/, "prevalidateImplantationV1 ausente.");
+assert.match(deployCode, /function setupImplantationV1\(/, "setupImplantationV1 ausente.");
+assert.match(deployCode, /function validateImplantationV1\(/, "validateImplantationV1 ausente.");
+assert.match(deployCode, /ALLOW_SETUP_IMPLANTATION_V1/, "O setup de Implantacao deve exigir propriedade temporaria propria.");
+const authenticatedDispatchCode = deployCode.slice(
+  deployCode.indexOf("function dispatchAuthenticatedAction"),
+  deployCode.indexOf("function buildPublicBootstrap"),
+);
+for (const action of ["prevalidateImplantationV1", "setupImplantationV1", "validateImplantationV1"]) {
+  assert.doesNotMatch(publicDispatchCode, new RegExp(action), `${action} nao pode pertencer ao dispatch publico.`);
+  assert.doesNotMatch(authenticatedDispatchCode, new RegExp(action), `${action} deve permanecer somente como funcao manual do editor.`);
+}
+const implantationPrevalidationCode = deployCode.slice(
+  deployCode.indexOf("function prevalidateImplantationV1"),
+  deployCode.indexOf("function setupImplantationV1"),
+);
+assert.doesNotMatch(
+  implantationPrevalidationCode,
+  /\.setValue|\.setValues|\.clear\(|\.copyTo\(|\.insertSheet|\.deleteSheet|appendAudit/,
+  "A pre-validacao de Implantacao e seus auxiliares devem ser estritamente somente leitura.",
+);
+const implantationSetupEntryCode = deployCode.slice(
+  deployCode.indexOf("function setupImplantationV1"),
+  deployCode.indexOf("function validateImplantationV1"),
+);
+assert.match(implantationSetupEntryCode, /getScriptLock\(\)/, "O setup de Implantacao deve adquirir ScriptLock.");
+assert.match(implantationSetupEntryCode, /buildImplantationPrevalidationV1\(spreadsheet\)/, "O setup deve repetir a pre-validacao dentro do lock.");
+assert.match(implantationSetupEntryCode, /if \(!reportBefore\.ready_to_setup\)/, "O setup deve abortar antes da escrita quando a pre-validacao falhar.");
+assert.match(implantationSetupEntryCode, /deleteProperty\(IMPLANTATION_SETUP_PROPERTY_V1\)/, "A propriedade temporaria de Implantacao deve ser consumida.");
+assert.doesNotMatch(implantationSetupEntryCode, /setupTechnicalColumns/, "O setup de Implantacao nao pode chamar setupTechnicalColumns().");
+assert.match(deployCode, /function rollbackImplantationSetupV1\(/, "Rollback integral do setup de Implantacao ausente.");
+assert.deepEqual(
+  manifest.oauthScopes,
+  ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/script.external_request"],
+  "A preparacao de Implantacao nao pode incluir escopo do Drive.",
+);
+
 const scriptProperties = { PUBLIC_READ_ACCESS: "SIM", SPREADSHEET_ID: "DEV_TEST" };
 const sandbox = {
   console,
@@ -143,13 +180,95 @@ const sandbox = {
     },
   },
   PropertiesService: {
-    getScriptProperties: () => ({ getProperty: (name) => scriptProperties[name] || null }),
+    getScriptProperties: () => ({
+      getProperty: (name) => scriptProperties[name] || null,
+      deleteProperty: (name) => { delete scriptProperties[name]; },
+    }),
   },
+  LockService: {
+    getScriptLock: () => ({ tryLock: () => true, releaseLock: () => undefined }),
+  },
+  SpreadsheetApp: { CopyPasteType: { PASTE_NORMAL: "PASTE_NORMAL" } },
   Utilities: { getUuid: () => "local-request-id" },
 };
 
 vm.createContext(sandbox);
 vm.runInContext(deployCode, sandbox, { filename: "Code.gs" });
+
+const implantationSeedReport = sandbox.emptyImplantationPrevalidationV1();
+sandbox.validateImplantationSeedV1(implantationSeedReport);
+assert.equal(implantationSeedReport.checklist_model.activities, 30);
+assert.equal(implantationSeedReport.checklist_model.evidence_rules, 16);
+assert.equal(implantationSeedReport.checklist_model.checksum_sha256, "9433f887315bbd5db40e4b94fa726a79edc0db639905347fcbb3a8fe8d78da39");
+for (const field of ["duplicate_seed_activity_codes", "invalid_offsets", "invalid_responsible_roles", "invalid_evidence_rules", "invalid_critical_rules", "structural_issues"]) {
+  assert.equal(implantationSeedReport[field].length, 0, `Seed de Implantacao invalido em ${field}.`);
+}
+assert.equal(sandbox.validateImplantationTransitionV1({ from: "NAO_INICIADO", to: "EM_ANDAMENTO", currentProgress: 0, requestedProgress: 25 }), 25);
+assert.equal(sandbox.validateImplantationTransitionV1({ from: "EM_ANDAMENTO", to: "BLOQUEADO", currentProgress: 50, reason: "Aguardando BB" }), 50);
+assert.throws(
+  () => sandbox.validateImplantationTransitionV1({ from: "EM_ANDAMENTO", to: "CANCELADO", currentProgress: 50, canCancel: true }),
+  /Motivo obrigat.rio/,
+);
+assert.equal(sandbox.calculateImplantationStoreProgressV1([
+  { status: "CONCLUIDO", progress: 100, active: true },
+  { status: "EM_ANDAMENTO", progress: 50, active: true },
+  { status: "NAO_APLICAVEL", progress: 0, active: true },
+]), 75);
+assert.equal(sandbox.calculateImplantationTargetDateV1("2026-09-30", -30), "2026-08-31");
+assert.equal(sandbox.isUpcomingImplantationV1("2026-08-14", "2026-09-13"), true);
+assert.equal(sandbox.isCriticalUpcomingImplantationV1("2026-08-14", "2026-08-21"), true);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(sandbox.missingImplantationEvidenceV1("CHK-MOD-00024", [
+    { type: "FOTO", active: true },
+    { type: "DOCUMENTO", active: true },
+  ]))),
+  [{ type: "FOTO", required: 2, found: 1 }],
+);
+assert.equal(sandbox.isImplantationStoreReadyV1([]), false);
+
+const originalOpenConfiguredSpreadsheet = sandbox.openConfiguredSpreadsheet;
+const originalBuildImplantationPrevalidation = sandbox.buildImplantationPrevalidationV1;
+const originalExecuteImplantationSetup = sandbox.executeImplantationSetupV1;
+scriptProperties.ALLOW_SETUP_IMPLANTATION_V1 = "SIM";
+sandbox.openConfiguredSpreadsheet = () => ({});
+sandbox.buildImplantationPrevalidationV1 = () => ({ already_initialized: true, ready_to_setup: false });
+sandbox.executeImplantationSetupV1 = () => { throw new Error("Setup idempotente não pode escrever."); };
+const idempotentSetup = sandbox.setupImplantationV1();
+assert.equal(idempotentSetup.status, "already_initialized");
+assert.equal(scriptProperties.ALLOW_SETUP_IMPLANTATION_V1, undefined, "A propriedade temporaria deve ser consumida mesmo no retorno idempotente.");
+sandbox.openConfiguredSpreadsheet = originalOpenConfiguredSpreadsheet;
+sandbox.buildImplantationPrevalidationV1 = originalBuildImplantationPrevalidation;
+sandbox.executeImplantationSetupV1 = originalExecuteImplantationSetup;
+
+let copiedBackup = 0;
+const originalSheet = {
+  getName: () => "01_LOJAS",
+  getMaxRows: () => 10,
+  getMaxColumns: () => 5,
+  getRange: () => ({ clear: () => undefined }),
+  setFrozenRows: () => undefined,
+  setFrozenColumns: () => undefined,
+};
+const backupSheet = {
+  getName: () => "BKP_IMPL_V1_01_LOJAS",
+  getMaxRows: () => 10,
+  getMaxColumns: () => 5,
+  getRange: () => ({ copyTo: () => { copiedBackup += 1; } }),
+  getFrozenRows: () => 4,
+  getFrozenColumns: () => 0,
+};
+const createdSheet = { getName: () => "17_CHECKLIST_MODELOS" };
+const rollbackSheets = { "17_CHECKLIST_MODELOS": createdSheet, "BKP_IMPL_V1_01_LOJAS": backupSheet };
+const removedRollbackSheets = [];
+const rollbackReport = sandbox.rollbackImplantationSetupV1({
+  getSheetByName: (name) => rollbackSheets[name] || null,
+  deleteSheet: (sheet) => { removedRollbackSheets.push(sheet.getName()); delete rollbackSheets[sheet.getName()]; },
+}, { backups: [{ original: originalSheet, backup: backupSheet }], createdSheets: [createdSheet] });
+assert.equal(rollbackReport.ok, true);
+assert.equal(copiedBackup, 1, "O rollback deve restaurar a aba original a partir do backup.");
+assert.deepEqual(Array.from(rollbackReport.restored), ["01_LOJAS"]);
+assert.deepEqual(Array.from(rollbackReport.removed), ["17_CHECKLIST_MODELOS"]);
+assert.deepEqual(removedRollbackSheets, ["17_CHECKLIST_MODELOS", "BKP_IMPL_V1_01_LOJAS"]);
 
 const getHealth = JSON.parse(sandbox.doGet({ parameter: { action: "health" } }).getContent());
 assert.equal(getHealth.ok, true);
@@ -623,3 +742,6 @@ console.log("✓ runtime dual bloqueia gravações antes da migração e detecta
 console.log("✓ escopo agrupado deriva quantidades, respeita Lojas_Permitidas e limita a um item");
 console.log("✓ comparação usa assinatura canônica e seleção sobreposta é bloqueada sem desmontagem automática");
 console.log("✓ DTO público agrupado preserva totais e escopo sem expor fornecedor, proposta ou campos internos reais");
+console.log("✓ Implantação V1 compila com 30 atividades, 16 regras e checksum versionado");
+console.log("✓ prevalidateImplantationV1 permanece somente leitura e as três funções de setup estão fora dos dispatches HTTP");
+console.log("✓ setupImplantationV1 exige propriedade temporária, lock, pré-validação, backups, validação e rollback; manifesto segue sem Drive");

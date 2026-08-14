@@ -11,7 +11,7 @@
     "check": "npm run lint && npm run typecheck",
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
-    "apps-script:build": "tsc -p apps-script/tsconfig.json && node scripts/copy-appsscript-manifest.mjs",
+    "apps-script:build": "node scripts/generate-implantation-seed.mjs && tsc -p apps-script/tsconfig.json && node scripts/copy-appsscript-manifest.mjs",
     "apps-script:verify": "node scripts/verify-apps-script-deploy.mjs",
     "sheets:check": "node scripts/sheets-check.mjs"
   },
