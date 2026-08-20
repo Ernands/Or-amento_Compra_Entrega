@@ -34,14 +34,14 @@
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "eslint": "latest",
-    "@vitejs/plugin-react": "^5.1.1",
+    "@vitejs/plugin-react": "^6.0.5",
     "eslint-plugin-react-hooks": "latest",
     "eslint-plugin-react-refresh": "latest",
     "tailwindcss": "latest",
     "tsx": "latest",
     "typescript": "latest",
     "typescript-eslint": "latest",
-    "vite": "^7.2.2",
+    "vite": "^8.2.1",
     "vitest": "latest"
   }
 }
